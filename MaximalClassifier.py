@@ -227,7 +227,7 @@ def main():
         top_features_cleaned = feature_importance.nlargest(100).index
         top_features_original = [column_mapping.get(feature, feature) for feature in top_features_cleaned]
         
-        # --- Start Incremental Evaluation of Top Features ---
+        #Start Incremental Evaluation of Top Features
     
         # Prepare to store incremental results for top features
         incremental_results = []
