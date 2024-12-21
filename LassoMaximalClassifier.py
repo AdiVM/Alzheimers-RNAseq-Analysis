@@ -1,4 +1,3 @@
-#testing to see if visual stuido is working correctly
 import argparse
 import os
 import pandas as pd
