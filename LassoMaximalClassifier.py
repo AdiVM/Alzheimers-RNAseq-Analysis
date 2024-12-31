@@ -184,30 +184,47 @@ def main():
     def get_top_features(automl, n_top=100):
         """
         Extract top features reliably from an AutoML model.
+        Parameters:
+        automl (object): The AutoML model object.
+        n_top (int): The number of top features to extract.
+        Returns:
+        list: A list of the top feature names.
         """
-        if hasattr(automl, "feature_importances_") and automl.feature_importances_ is not None:
-            # Sort features by importance
-            feature_importance_series = pd.Series(
-                automl.feature_importances_,
-                index=automl.feature_names_in_
-            ).nlargest(n_top)
-            return feature_importance_series.index
+        # Handle 1D or multi-dimensional feature_importances_
+        if len(automl.feature_importances_) == 1:
+            # Sort features by absolute importance
+            feature_names = np.array(automl.feature_names_in_)[
+                np.argsort(abs(automl.feature_importances_[0]))[::-1]
+            ]
+            fi = automl.feature_importances_[0][
+                np.argsort(abs(automl.feature_importances_[0]))[::-1]
+            ]
         else:
-            raise ValueError("Feature importances are not available for this model.")
-    
+            feature_names = np.array(automl.feature_names_in_)[
+                np.argsort(abs(automl.feature_importances_))[::-1]
+            ]
+            fi = automl.feature_importances_[
+                np.argsort(abs(automl.feature_importances_))[::-1]
+            ]
+        
+        # Extract the top n features
+        feature_names_top = feature_names[:n_top]
+        return feature_names_top
+
     # Start top feature extraction
     try:
-        top_features_cleaned = get_top_features(maximal_classifier)
+        top_features_cleaned = get_top_features(maximal_classifier, n_top=100)
+        print(f"Top 100 features extracted:\n{top_features_cleaned}")
     except ValueError as e:
         print(f"Error extracting features: {e}")
         return  # Exit if feature importances are unavailable
-    
+
     # Map features back to original names for interpretability
     top_features_original = [column_mapping.get(feature, feature) for feature in top_features_cleaned]
-    
+
     # --- Start Incremental Evaluation ---
     incremental_results = []
-    
+
     for i, feature_subset in enumerate(top_features_cleaned[:100], start=1):
         print(f"Retraining model with top {i} features")
         current_features = top_features_cleaned[:i]
@@ -222,39 +239,40 @@ def main():
             X_train_top_i, y_train,
             log_file_name=f"{log_dir_path}/experiment_log.txt"
         )
-    
+
         # Predict probabilities
         y_prob_train_i = incremental_classifier.predict_proba(X_train_top_i)[:, 1]
         y_prob_test_i = incremental_classifier.predict_proba(X_test_top_i)[:, 1]
         
         y_pred_train_i = (y_prob_train_i >= optimal_threshold).astype(int)
         y_pred_test_i = (y_prob_test_i >= optimal_threshold).astype(int)
-    
+
         # Collect metrics
         result = {
-                'num_features': i,
-                'names_of_features': current_features,
-                'train_accuracy': accuracy_score(y_train, y_pred_train_i),
-                'train_roc_auc': roc_auc_score(y_train, y_prob_train_i),
-                'train_avg_precision': average_precision_score(y_train, y_prob_train_i),
-                'train_recall': recall_score(y_train, y_pred_train_i),
-                'train_precision': precision_score(y_train, y_pred_train_i),
-                'train_f1': f1_score(y_train, y_pred_train_i),
-                'train_mcc': matthews_corrcoef(y_train, y_pred_train_i),
-                'test_accuracy': accuracy_score(y_test, y_pred_test_i),
-                'test_roc_auc': roc_auc_score(y_test, y_prob_test_i),
-                'test_avg_precision': average_precision_score(y_test, y_prob_test_i),
-                'test_recall': recall_score(y_test, y_pred_test_i),
-                'test_precision': precision_score(y_test, y_pred_test_i),
-                'test_f1': f1_score(y_test, y_pred_test_i),
-                'test_mcc': matthews_corrcoef(y_test, y_pred_test_i)
-            }
+            'num_features': i,
+            'names_of_features': current_features,
+            'train_accuracy': accuracy_score(y_train, y_pred_train_i),
+            'train_roc_auc': roc_auc_score(y_train, y_prob_train_i),
+            'train_avg_precision': average_precision_score(y_train, y_prob_train_i),
+            'train_recall': recall_score(y_train, y_pred_train_i),
+            'train_precision': precision_score(y_train, y_pred_train_i),
+            'train_f1': f1_score(y_train, y_pred_train_i),
+            'train_mcc': matthews_corrcoef(y_train, y_pred_train_i),
+            'test_accuracy': accuracy_score(y_test, y_pred_test_i),
+            'test_roc_auc': roc_auc_score(y_test, y_prob_test_i),
+            'test_avg_precision': average_precision_score(y_test, y_prob_test_i),
+            'test_recall': recall_score(y_test, y_pred_test_i),
+            'test_precision': precision_score(y_test, y_pred_test_i),
+            'test_f1': f1_score(y_test, y_pred_test_i),
+            'test_mcc': matthews_corrcoef(y_test, y_pred_test_i)
+        }
         incremental_results.append(result)
-    
+
     # Save results
     incremental_results_df = pd.DataFrame(incremental_results)
     incremental_results_df.to_csv(f'{log_dir_path}incremental_top_features_metrics.csv', index=False)
     print("Incremental evaluation completed successfully")
+
     
 
 
