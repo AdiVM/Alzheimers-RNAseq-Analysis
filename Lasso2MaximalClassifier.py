@@ -76,3 +76,4 @@ for i in range(1, 101):
     incremental_results.append(result)
 
 pd.DataFrame(incremental_results).to_csv(f'{log_dir_path}incremental_top_features_metrics.csv', index=False)
+# Convert df to CSV
