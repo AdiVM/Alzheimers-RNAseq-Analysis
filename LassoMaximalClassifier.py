@@ -133,8 +133,8 @@ def main():
         task="classification", time_budget=12000, metric='log_loss',
         n_jobs=-1, eval_method='cv', n_splits=10, split_type='stratified',
         log_training_metric=True, early_stop=True, seed=239875, estimator_list=['lrl1'],
-        log_file_name=f"{log_dir_path}/experiment_log.txt"
-                #defined the log file for feature retraining
+        log_file_name=f"{log_dir_path}/all_features_log.txt"
+                # Defined the log file for feature retraining
     )
 
      # Save the full model using joblib
@@ -237,7 +237,7 @@ def main():
         incremental_classifier = AutoML()
         incremental_classifier.retrain_from_log(
             X_train_top_i, y_train,
-            log_file_name=f"{log_dir_path}/experiment_log.txt"
+            log_file_name=f"{log_dir_path}/all_features_log.txt"
         )
 
         # Predict probabilities
