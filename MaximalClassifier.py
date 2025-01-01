@@ -138,12 +138,13 @@ def main():
     lgbm_model_path = f"{log_dir_path}lgbm_model_all_features.pkl"
     joblib.dump(maximal_classifier.model, lgbm_model_path)
     print(f"LGBM model saved to {lgbm_model_path}")
-
+    
     # Predictions and optimal threshold using Youden's J statistic
     y_prob_train = maximal_classifier.predict_proba(X_train)[:, 1]
     y_prob_test = maximal_classifier.predict_proba(X_test)[:, 1]
 
     thresholds = np.arange(0.0, 1.0, 0.01)
+    # Iterating through thresholds
     youden_stats = [(recall_score(y_train, (y_prob_train >= t).astype(int)) +
                      recall_score(y_train, (y_prob_train >= t).astype(int), pos_label=0) - 1)
                     for t in thresholds]
