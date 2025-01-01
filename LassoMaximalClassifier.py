@@ -10,7 +10,7 @@ from flaml import AutoML
 import matplotlib.pyplot as plt
 import joblib
 
-log_dir_path = "/n/groups/patel/adithya/Log_Dir_Maximal/"
+log_dir_path = "/n/groups/patel/adithya/Lasso_Log_Dir_Maximal/"
 LOG_FILE_PATH = os.path.expanduser(f'{log_dir_path}experiment_log.txt')
 
 

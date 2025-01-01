@@ -131,8 +131,13 @@ def main():
         X_train, y_train,
         task="classification", time_budget=12000, metric='log_loss',
         n_jobs=-1, eval_method='cv', n_splits=10, split_type='stratified',
-        log_training_metric=True, early_stop=True, seed=239875, estimator_list=['lgbm']
+        log_training_metric=True, early_stop=True, seed=239875, estimator_list=['lgbm'],
+        log_file_name=f"{log_dir_path}/all_features_log.txt"
     )
+
+    lgbm_model_path = f"{log_dir_path}lgbm_model_all_features.pkl"
+    joblib.dump(maximal_classifier.model, lgbm_model_path)
+    print(f"LGBM model saved to {lgbm_model_path}")
 
     # Predictions and optimal threshold using Youden's J statistic
     y_prob_train = maximal_classifier.predict_proba(X_train)[:, 1]
