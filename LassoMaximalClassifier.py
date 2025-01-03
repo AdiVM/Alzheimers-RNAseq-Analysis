@@ -137,10 +137,7 @@ def main():
                 # Defined the log file for feature retraining
     )
 
-     # Save the full model using joblib
-    lasso_model_path = f"{log_dir_path}lasso_model_all_features.pkl"
-    joblib.dump(maximal_classifier.model, lasso_model_path)
-    print(f"Lasso model saved to {lasso_model_path}")
+      # Save the full model using joblib
 
 
     # Predictions and optimal threshold using Youden's J statistic
@@ -235,9 +232,9 @@ def main():
         
         # Retrain using the existing log
         incremental_classifier = AutoML()
-        incremental_classifier.retrain_from_log(
-            X_train_top_i, y_train,
-            log_file_name=f"{log_dir_path}/all_features_log.txt"
+        incremental_classifier.retrain_from_log(log_file_name="/n/groups/patel/adithya/Lasso_Log_Dir_Maximal/all_features_log.txt", 
+        X_train=X_train_top_i, 
+        y_train=y_train
         )
 
         # Predict probabilities
