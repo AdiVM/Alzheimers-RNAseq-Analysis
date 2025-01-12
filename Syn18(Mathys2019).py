@@ -10,6 +10,7 @@ from flaml import AutoML
 import matplotlib.pyplot as plt
 import joblib
 from sklearn.model_selection import StratifiedShuffleSplit
+from sklearn.model_selection import train_test_split
 
 log_dir_path = "/n/groups/patel/adithya/Syn18_Lasso_Log_Dir_Maximal/"
 LOG_FILE_PATH = os.path.expanduser(f'{log_dir_path}experiment_log.txt')
@@ -40,7 +41,7 @@ def main():
     metadata = metadata.copy()
     metadata['alzheimers_or_control'] = metadata['age_first_ad_dx'].notnull().astype(int)
 
-    # Extract unique sample IDs and their associated Alzheimer's/control status
+    # Extract unique sample IDs and their associated Alzheimer's/control status -- drop duplicates
     sample_summary = metadata[['sample', 'alzheimers_or_control', 'msex']].drop_duplicates()
 
     # I need to create a combined stratification variable
