@@ -41,22 +41,22 @@ def main():
     metadata['alzheimers_or_control'] = metadata['age_first_ad_dx'].notnull().astype(int)
 
     # Extract unique sample IDs and their associated Alzheimer's/control status
-    sample_summary = metadata[['sample_id', 'alzheimers_or_control', 'msex']].drop_duplicates()
+    sample_summary = metadata[['sample', 'alzheimers_or_control', 'msex']].drop_duplicates()
 
     # I need to create a combined stratification variable
     sample_summary['stratify_group'] = sample_summary['alzheimers_or_control'].astype(str) + "_" + sample_summary['msex'].astype(str)
 
     # Perform stratified train-test split on `sample_id`, stratified by `alzheimers_or_control`
     train_samples, test_samples = train_test_split(
-        sample_summary['sample_id'],
+        sample_summary['sample'],
         test_size=0.2,
         random_state=42,
         stratify=sample_summary['stratify_group']
     )
 
     # Filter metadata by train and test `sample_id`
-    train_metadata = metadata[metadata['sample_id'].isin(train_samples)]
-    test_metadata = metadata[metadata['sample_id'].isin(test_samples)]
+    train_metadata = metadata[metadata['sample'].isin(train_samples)]
+    test_metadata = metadata[metadata['sample'].isin(test_samples)]
 
 
     print(f"Number of cases in training: {sum(train_metadata['alzheimers_or_control'])}")
