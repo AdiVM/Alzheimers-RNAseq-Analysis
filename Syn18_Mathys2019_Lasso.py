@@ -250,7 +250,6 @@ def main():
         X_test_top_i = X_test[current_features]
         
         # Retrain using the existing log
-        # Fixed existing log path
         incremental_classifier = AutoML()
         incremental_classifier.retrain_from_log(log_file_name="/n/groups/patel/adithya/Syn18_Lasso_Log_Dir_Maximal/all_features_log.txt", 
         X_train=X_train_top_i, 
