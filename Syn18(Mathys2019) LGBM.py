@@ -12,7 +12,7 @@ import joblib
 from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.model_selection import train_test_split
 
-log_dir_path = "/n/groups/patel/adithya/Syn18_Lasso_Log_Dir_Maximal/"
+log_dir_path = "/n/groups/patel/adithya/Syn18_LGBM_Log_Dir_Maximal/"
 LOG_FILE_PATH = os.path.expanduser(f'{log_dir_path}experiment_log.txt')
 
 
@@ -151,7 +151,9 @@ def main():
         n_splits=10, 
         split_type='stratified',
         log_training_metric=True, 
-        early_stop=True, seed=239875, estimator_list=['lrl1'],
+        early_stop=True, 
+        seed=239875, 
+        estimator_list=['lgbm'],
         log_file_name=f"{log_dir_path}/all_features_log.txt"
                 # Defined the log file for feature retraining
     )
@@ -251,7 +253,7 @@ def main():
         
         # Retrain using the existing log
         incremental_classifier = AutoML()
-        incremental_classifier.retrain_from_log(log_file_name="/n/groups/patel/adithya/Syn18_Lasso_Log_Dir_Maximal/all_features_log.txt", 
+        incremental_classifier.retrain_from_log(log_file_name="/n/groups/patel/adithya/LGBM_Log_Dir_Maximal/all_features_log.txt", 
         X_train=X_train_top_i, 
         y_train=y_train
         )
