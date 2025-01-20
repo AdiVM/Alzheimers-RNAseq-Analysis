@@ -152,7 +152,7 @@ def main():
         metric='roc_auc',
         n_jobs=-1, 
         eval_method='cv', 
-        n_splits=20,
+        n_splits=10,
         split_type='group',  # Use grouped cross-validation
         groups=metadata['sample'], # Define the groups used
         log_training_metric=True, 
