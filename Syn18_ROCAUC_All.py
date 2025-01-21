@@ -154,7 +154,7 @@ def main():
         eval_method='cv', 
         n_splits=10,
         split_type='group',  # Use grouped cross-validation
-        groups=metadata['sample'], # Define the groups used
+        groups=train_metadata.loc[X_train.index, 'sample'].values, # Define the groups used
         log_training_metric=True, 
         early_stop=True, seed=239875, estimator_list=['lrl1', 'lgbm', 'rf'],
         model_history=True,
