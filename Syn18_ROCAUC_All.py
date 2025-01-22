@@ -96,14 +96,14 @@ def main():
     # Merge the train and test matrices with their respective metadata files
 
     train_data = train_matrix_filtered.merge(
-        train_metadata[['TAG', 'msex', 'broad.cell.type', 'alzheimers_or_control'] + apoe_genotype_columns],
+        train_metadata[['TAG', 'msex', 'sample', 'broad.cell.type', 'alzheimers_or_control'] + apoe_genotype_columns],
         left_index=True,
         right_on='TAG',
         how='inner'
     ).set_index('TAG')
     
     test_data = test_matrix_filtered.merge(
-        test_metadata[['TAG', 'msex', 'broad.cell.type', 'alzheimers_or_control'] + apoe_genotype_columns],
+        test_metadata[['TAG', 'msex', 'sample', 'broad.cell.type', 'alzheimers_or_control'] + apoe_genotype_columns],
         left_index=True,
         right_on='TAG',
         how='inner'
@@ -138,7 +138,7 @@ def main():
     print(X_test.shape)
 
     # Changing the cross validation method to ensure all cells from a given sample are in the same fold
-    cv = StratifiedGroupKFold(n_splits=10)
+    cv_groups = X_train['sample'].values
 
 
     # Run maximal classification experiment on all data
@@ -154,7 +154,7 @@ def main():
         eval_method='cv', 
         n_splits=10,
         split_type='group',  # Use grouped cross-validation
-        groups=train_metadata.loc[X_train.index, 'sample'].values, # Define the groups used
+        groups=cv_groups, # Define the groups used
         log_training_metric=True, 
         early_stop=True, seed=239875, estimator_list=['lrl1', 'lgbm', 'rf'],
         model_history=True,
