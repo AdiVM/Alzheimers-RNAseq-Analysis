@@ -138,29 +138,97 @@ def main():
     print(X_test.shape)
 
     # Changing the cross validation method to ensure all cells from a given sample are in the same fold
-    cv_groups = X_train['sample'].values
+    # cv_groups = X_train['sample'].values
 
 
-    # Run maximal classification experiment on all data
-    output_csv = f'{log_dir_path}maximal_output_log.csv'
-    print("Starting all features classification")
+    # # Run maximal classification experiment on all data
+    # output_csv = f'{log_dir_path}maximal_output_log.csv'
+    # print("Starting all features classification")
+    # maximal_classifier = AutoML()
+    # maximal_classifier.fit(
+    #     X_train, y_train,
+    #     task="classification", 
+    #     time_budget=12000,
+    #     metric='roc_auc',
+    #     n_jobs=-1, 
+    #     eval_method='cv', 
+    #     n_splits=10,
+    #     split_type='group',  # Use grouped cross-validation
+    #     groups=cv_groups, # Define the groups used
+    #     log_training_metric=True, 
+    #     early_stop=True, 
+    #     seed=239875, 
+    #     estimator_list=['lrl1', 'lgbm', 'rf'],
+    #     model_history=True,
+    #     log_file_name=f"{log_dir_path}/all_features_log.txt"
+    #             # Defined the log file for feature retraining
+    # )
+
+    #########################################################################
+    # Trying a new method of creating cross validation folds:
+    from sklearn.model_selection import StratifiedGroupKFold
+    import numpy as np
+
+    def generate_valid_folds(X, y, groups, n_splits=10, max_retries=100):
+        # I am creating a function to generate and use only valid-cross validation folds -- some folds are being created with only 1 of each class
+        retries = 0
+        while retries < max_retries:
+            retries += 1
+            valid_folds = True
+            stratified_group_kfold = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=np.random.randint(1000))
+            
+            # Check all folds for class balance
+            folds = list(stratified_group_kfold.split(X, y, groups))
+            for fold, (train_idx, val_idx) in enumerate(folds):
+                train_y, val_y = y.iloc[train_idx], y.iloc[val_idx]
+                if len(val_y.unique()) < 2:  # If only one class in validation set
+                    print(f"Retry {retries}: Fold {fold + 1} has only one class. Retrying...")
+                    valid_folds = False
+                    break
+
+            if valid_folds:
+                print(f"Valid folds generated after {retries} retries.")
+                return folds  # Return valid folds
+        
+        raise ValueError("Unable to generate valid folds after maximum retries.")
+
+    # Example Usage:
+    # Generate valid folds
+    valid_folds = generate_valid_folds(
+        X_train,
+        y_train,
+        groups=train_metadata['sample'],
+        n_splits=10,
+        max_retries=100
+    )
+
+    # Debug valid folds (optional)
+    for fold, (train_idx, val_idx) in enumerate(valid_folds):
+        print(f"Fold {fold + 1}:")
+        print("Train class distribution:", y_train.iloc[train_idx].value_counts())
+        print("Validation class distribution:", y_train.iloc[val_idx].value_counts())
+
+    # Use the valid folds in AutoML
     maximal_classifier = AutoML()
     maximal_classifier.fit(
         X_train, y_train,
-        task="classification", 
+        task="classification",
         time_budget=12000,
         metric='roc_auc',
-        n_jobs=-1, 
-        eval_method='cv', 
-        n_splits=10,
-        split_type='group',  # Use grouped cross-validation
-        groups=cv_groups, # Define the groups used
-        log_training_metric=True, 
-        early_stop=True, seed=239875, estimator_list=['lrl1', 'lgbm', 'rf'],
+        n_jobs=-1,
+        eval_method='cv',
+        split_type='custom',  # Use pre-split folds
+        split=valid_folds,    # Pass valid folds
+        log_training_metric=True,
+        early_stop=True,
+        seed=239875,
+        estimator_list=['lrl1', 'lgbm', 'rf'],
         model_history=True,
         log_file_name=f"{log_dir_path}/all_features_log.txt"
-                # Defined the log file for feature retraining
     )
+
+
+
 
     best_model = maximal_classifier.model
     best_estimator_type = type(best_model).__name__
@@ -168,7 +236,7 @@ def main():
     best_parameters = str(maximal_classifier.best_config)  # Convert to string for logging
     best_score = maximal_classifier.best_loss
 
-# Log best estimator details to the text log
+    # Log best estimator details to the text log
     with open(LOG_FILE_PATH, 'a') as log_file:
         log_file.write(f"Best Estimator Type: {best_estimator_type}\n")
         log_file.write(f"Best Estimator Name: {best_estimator_name}\n")
