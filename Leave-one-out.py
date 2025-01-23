@@ -46,12 +46,11 @@ def main():
     apoe_genotype_columns = [col for col in metadata.columns if col.startswith("apoe_genotype_")]
 
 
-    # Stratified Shuffle Split based on `sample_id`to split metadata
     # Define Alzheimer's or control status directly based on `age_first_ad_dx`
     metadata = metadata.copy()
     metadata['alzheimers_or_control'] = metadata['age_first_ad_dx'].notnull().astype(int)
 
-    # Create train and test metadata
+    # Create train and test metadata based on the leave_out_sample
     test_metadata = metadata[metadata['sample'] == leave_out_sample]
 
     # Using just the given argument sample as the test set
