@@ -63,6 +63,10 @@ def main():
     train_metadata = metadata[metadata['sample'].isin(train_samples)]
     test_metadata = metadata[metadata['sample'].isin(test_samples)]
 
+    # Filter both the training and testing for cell type
+    train_metadata = train_metadata[train_metadata['broad.cell.type' == cell_type]]
+    test_metadata = test_metadata[test_metadata['broad.cell.type'] == cell_type]
+
 
     print(f"Number of cases in training: {sum(train_metadata['alzheimers_or_control'])}")
     print(f"Number of cases in test: {sum(test_metadata['alzheimers_or_control'])}")
@@ -174,13 +178,13 @@ def main():
 
         raise ValueError("Unable to generate valid folds after maximum retries.")
 
-        # For task one I am training on all cell types, but testing only on one specific cell type. Therefore, I will subset just the testing sets for cell type:
+    # For task one I am training on all cell types, but testing only on one specific cell type. Therefore, I will subset just the testing sets for cell type:
     
-    X_train = X_train[train_metadata['broad.cell.type'] == cell_type]
-    y_train = y_train[train_metadata['broad.cell.type'] == cell_type]
+    X_train = X_train[X_train['broad.cell.type'] == cell_type]
+    y_train = y_train[y_train['broad.cell.type'] == cell_type]
 
-    X_test = X_test[test_metadata['broad.cell.type'] == cell_type]
-    y_test = y_test[test_metadata['broad.cell.type'] == cell_type]
+    X_test = X_test[X_test['broad.cell.type'] == cell_type]
+    y_test = y_test[y_test['broad.cell.type'] == cell_type]
     
     # Generate valid folds
     valid_folds = generate_valid_folds(
