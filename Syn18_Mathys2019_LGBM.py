@@ -158,7 +158,8 @@ def main():
                 # Defined the log file for feature retraining
     )
 
-      # Save the full model using joblib
+    # Save the full model using joblib
+    joblib.dump(maximal_classifier, f'{log_dir_path}/maximal_classifier.joblib')
 
 
     # Predictions and optimal threshold using Youden's J statistic

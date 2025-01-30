@@ -137,32 +137,6 @@ def main():
     print(X_train.shape)
     print(X_test.shape)
 
-    # Changing the cross validation method to ensure all cells from a given sample are in the same fold
-    # cv_groups = X_train['sample'].values
-
-
-    # # Run maximal classification experiment on all data
-    # output_csv = f'{log_dir_path}maximal_output_log.csv'
-    # print("Starting all features classification")
-    # maximal_classifier = AutoML()
-    # maximal_classifier.fit(
-    #     X_train, y_train,
-    #     task="classification", 
-    #     time_budget=12000,
-    #     metric='roc_auc',
-    #     n_jobs=-1, 
-    #     eval_method='cv', 
-    #     n_splits=10,
-    #     split_type='group',  # Use grouped cross-validation
-    #     groups=cv_groups, # Define the groups used
-    #     log_training_metric=True, 
-    #     early_stop=True, 
-    #     seed=239875, 
-    #     estimator_list=['lrl1', 'lgbm', 'rf'],
-    #     model_history=True,
-    #     log_file_name=f"{log_dir_path}/all_features_log.txt"
-    #             # Defined the log file for feature retraining
-    # )
 
     #########################################################################
     # Trying a new method of creating cross validation folds:
@@ -170,50 +144,43 @@ def main():
     import numpy as np
 
     def generate_valid_folds(X, y, groups, n_splits=10, max_retries=100):
-        # I am creating a function to generate and use only valid-cross validation folds -- some folds are being created with only 1 of each class
+        """
+        Generate valid folds for StratifiedGroupKFold to ensure no fold has only one class.
+        Retries until valid folds are created.
+        """
         retries = 0
         while retries < max_retries:
             retries += 1
             valid_folds = True
             stratified_group_kfold = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=np.random.randint(1000))
             
-            # Check all folds for class balance
+            # Generate folds
             folds = list(stratified_group_kfold.split(X, y, groups))
-            # The .split() method generates a series of (train_idx, val_idx) pairs for each fold
 
-            # For each fold created above, creating a train set and a validation set
+            # Check for class balance in validation folds
             for fold, (train_idx, val_idx) in enumerate(folds):
-                # Extracts the target (y) values for the training and validation sets in the current fold, and the number of classes is counted later using this extracted data
                 train_y, val_y = y.iloc[train_idx], y.iloc[val_idx]
-                # Counts the number of unique labels in the validation set
-                if len(val_y.unique()) < 2:  # If only one class in validation set
+                if len(val_y.unique()) < 2:  # Check if validation set has both classes
                     print(f"Retry {retries}: Fold {fold + 1} has only one class. Retrying...")
                     valid_folds = False
-                    # Break out of this for loop if one of the the folds is invalid
                     break
 
             if valid_folds:
                 print(f"Valid folds generated after {retries} retries.")
                 return folds  # Return valid folds
-        
+
         raise ValueError("Unable to generate valid folds after maximum retries.")
 
     # Generate valid folds
     valid_folds = generate_valid_folds(
-        X_train,
-        y_train,
-        groups=train_metadata['sample'],
+        X_train,  # Feature matrix
+        y_train,  # Target variable
+        groups=train_metadata['sample'],  # Group variable
         n_splits=10,
         max_retries=100
     )
 
-    # Debug valid folds (optional)
-    for fold, (train_idx, val_idx) in enumerate(valid_folds):
-        print(f"Fold {fold + 1}:")
-        print("Train class distribution:", y_train.iloc[train_idx].value_counts())
-        print("Validation class distribution:", y_train.iloc[val_idx].value_counts())
-
-    # Use the valid folds in AutoML
+    # Use valid folds in AutoML
     maximal_classifier = AutoML()
     maximal_classifier.fit(
         X_train, y_train,
@@ -222,8 +189,8 @@ def main():
         metric='roc_auc',
         n_jobs=-1,
         eval_method='cv',
-        split_type='custom',  # Useing pre-split folds made above
-        split=valid_folds,    # Utilize the newly created valid folds
+        split_type='custom',  # Use pre-split folds
+        split=valid_folds,    # Provide the valid folds directly
         log_training_metric=True,
         early_stop=True,
         seed=239875,

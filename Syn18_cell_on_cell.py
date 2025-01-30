@@ -13,29 +13,23 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import StratifiedGroupKFold
 
-log_dir_path = "/n/groups/patel/adithya/Leave_One_Out/"
+log_dir_path = "/n/groups/patel/adithya/Syn18_Log_Dir_Cell_on_cell/"
 LOG_FILE_PATH = os.path.expanduser(f'{log_dir_path}experiment_log.txt')
 
 
 def main():
     parser = argparse.ArgumentParser(description='Run AutoML on combined gene expression and metadata data')
     parser.add_argument('--exp_type', type=str, choices=['maximal'], required=True, help='Specify experiment type')
-    parser.add_argument('--sample', type=int, required=True, help='Specify the sample number to leave out for testing')
-
+    parser.add_argument('--cell_type', type=str, required=True, help='Specify the cell type to train on')
     args = parser.parse_args()
     
     exp_type = args.exp_type
-    leave_out_sample = args.sample
+    cell_type = args.cell_type
 
-    log_message = f"Processing {exp_type} data with full integration of gene and metadata features"
+
+    log_message = f"Processing {exp_type} data with {cell_type} cells using full integration of gene and metadata features"
     with open(LOG_FILE_PATH, 'a') as log_file:
         log_file.write(log_message + '\n')
-
-    log_message = f"Processing leave-one-out experiment for sample {leave_out_sample}"
-    with open(LOG_FILE_PATH, 'a') as log_file:
-        log_file.write(log_message + '\n')
-
-    
 
     # Load the data
     metadata = pd.read_parquet('/home/adm808/CellMetadataSyn18485175.parquet')
@@ -46,15 +40,28 @@ def main():
     apoe_genotype_columns = [col for col in metadata.columns if col.startswith("apoe_genotype_")]
 
 
+    # Stratified Shuffle Split based on `sample_id`to split metadata
     # Define Alzheimer's or control status directly based on `age_first_ad_dx`
     metadata = metadata.copy()
     metadata['alzheimers_or_control'] = metadata['age_first_ad_dx'].notnull().astype(int)
 
-    # Create train and test metadata based on the leave_out_sample
-    test_metadata = metadata[metadata['sample'] == leave_out_sample]
+    # Extract unique sample IDs and their associated Alzheimer's/control status -- drop duplicates
+    sample_summary = metadata[['sample', 'alzheimers_or_control', 'msex']].drop_duplicates()
 
-    # Using just the given argument sample as the test set
-    train_metadata = metadata[metadata['sample'] != leave_out_sample]
+    # I need to create a combined stratification variable
+    sample_summary['stratify_group'] = sample_summary['alzheimers_or_control'].astype(str) + "_" + sample_summary['msex'].astype(str)
+
+    # Perform stratified train-test split on `sample_id`, stratified by `alzheimers_or_control`
+    train_samples, test_samples = train_test_split(
+        sample_summary['sample'],
+        test_size=0.2,
+        random_state=42,
+        stratify=sample_summary['stratify_group']
+    )
+
+    # Filter metadata by train and test `sample_id`
+    train_metadata = metadata[metadata['sample'].isin(train_samples)]
+    test_metadata = metadata[metadata['sample'].isin(test_samples)]
 
 
     print(f"Number of cases in training: {sum(train_metadata['alzheimers_or_control'])}")
@@ -133,37 +140,90 @@ def main():
     print(X_train.shape)
     print(X_test.shape)
 
-    #########################################################################
-    # No cross validation needed
-    # We are effectively performing cross validation
 
-    output_csv = f'{log_dir_path}maximal_output_log.csv'
-    print("Starting all features classification")
+    #########################################################################
+    # Trying a new method of creating cross validation folds:
+    from sklearn.model_selection import StratifiedGroupKFold
+    import numpy as np
+
+    def generate_valid_folds(X, y, groups, n_splits=10, max_retries=100):
+        """
+        Generate valid folds for StratifiedGroupKFold to ensure no fold has only one class.
+        Retries until valid folds are created.
+        """
+        retries = 0
+        while retries < max_retries:
+            retries += 1
+            valid_folds = True
+            stratified_group_kfold = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=np.random.randint(1000))
+            
+            # Generate folds
+            folds = list(stratified_group_kfold.split(X, y, groups))
+
+            # Check for class balance in validation folds
+            for fold, (train_idx, val_idx) in enumerate(folds):
+                train_y, val_y = y.iloc[train_idx], y.iloc[val_idx]
+                if len(val_y.unique()) < 2:  # Check if validation set has both classes
+                    print(f"Retry {retries}: Fold {fold + 1} has only one class. Retrying...")
+                    valid_folds = False
+                    break
+
+            if valid_folds:
+                print(f"Valid folds generated after {retries} retries.")
+                return folds  # Return valid folds
+
+        raise ValueError("Unable to generate valid folds after maximum retries.")
+
+        # For task one I am training on all cell types, but testing only on one specific cell type. Therefore, I will subset just the testing sets for cell type:
+    
+    X_train = X_train[train_metadata['broad.cell.type'] == cell_type]
+    y_train = y_train[train_metadata['broad.cell.type'] == cell_type]
+
+    X_test = X_test[test_metadata['broad.cell.type'] == cell_type]
+    y_test = y_test[test_metadata['broad.cell.type'] == cell_type]
+    
+    # Generate valid folds
+    valid_folds = generate_valid_folds(
+        X_train,  # Feature matrix
+        y_train,  # Target variable
+        groups=train_metadata['sample'],  # Group variable
+        n_splits=10,
+        max_retries=100
+    )
+
+    cell_log_dir = os.path.join(log_dir_path, cell_type)
+
+    # Create the directory if it doesn’t exist
+    os.makedirs(cell_log_dir, exist_ok=True)
+
+
+
+
+    # Use valid folds in AutoML
     maximal_classifier = AutoML()
     maximal_classifier.fit(
         X_train, y_train,
-        task="classification", 
-        time_budget=12000, 
+        task="classification",
+        time_budget=12000,
         metric='log_loss',
-        n_jobs=-1, 
-        eval_method='cv', 
-        n_splits=10, 
-        split_type='stratified',
-        log_training_metric=True, 
-        early_stop=True, 
-        seed=239875, 
+        n_jobs=-1,
+        eval_method='cv',
+        split_type='custom',  # Use pre-split folds
+        split=valid_folds,    # Provide the valid folds
+        log_training_metric=True,
+        early_stop=True,
+        seed=239875,
         estimator_list=['lgbm'],
-        log_file_name=f"{log_dir_path}/all_features_log.txt"
-                # Defined the log file for feature retraining
+        model_history=True,
+        log_file_name=f"{cell_log_dir}/all_features_log.txt"
     )
-
 
 
 
 
     # Save the full model using joblib
 
-    joblib.dump(maximal_classifier, f'{log_dir_path}/maximal_classifier.joblib')
+    joblib.dump(maximal_classifier, f'{cell_log_dir}/maximal_classifier.joblib')
 
 
     # Predictions and optimal threshold using Youden's J statistic
@@ -197,7 +257,7 @@ def main():
         'test_mcc': matthews_corrcoef(y_test, y_pred_test_optimal)
     }
 
-    pd.DataFrame([metrics]).to_csv(output_csv, index=False)
+    pd.DataFrame([metrics]).to_csv(f'{cell_log_dir}/output_csv.csv', index=False)
 
 
     # Feature importance for top 100 features and avoid mismatch error
@@ -258,7 +318,7 @@ def main():
         
         # Retrain using the existing log
         incremental_classifier = AutoML()
-        incremental_classifier.retrain_from_log(log_file_name="/n/groups/patel/adithya/Syn18_ROCAUC_Log_Dir_Maximal/all_features_log.txt", 
+        incremental_classifier.retrain_from_log(log_file_name=f'{cell_log_dir}/all_features_log.txt', 
         X_train=X_train_top_i, 
         y_train=y_train
         )
@@ -293,7 +353,7 @@ def main():
 
     # Save results
     incremental_results_df = pd.DataFrame(incremental_results)
-    incremental_results_df.to_csv(f'{log_dir_path}incremental_top_features_metrics.csv', index=False)
+    incremental_results_df.to_csv(f'{cell_log_dir}incremental_top_features_metrics.csv', index=False)
     print("Incremental evaluation completed successfully")
 
     
