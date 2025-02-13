@@ -178,14 +178,15 @@ def main():
         raise ValueError("Unable to generate valid folds after maximum retries.")
     
 
-    # Generate valid folds
-    valid_folds = generate_valid_folds(
-        X_train,  # Feature matrix
-        y_train,  # Target variable
-        groups=train_metadata['sample'],  # Group variable
-        n_splits=10,
-        max_retries=100
-    )
+    # This seciton is throwing an error, seems like flaml has no argument to create custom folds, must follow approach taken below:
+    # # Generate valid folds
+    # valid_folds = generate_valid_folds(
+        # X_train,  # Feature matrix
+    #     y_train,  # Target variable
+    #     groups=train_metadata['sample'],  # Group variable
+    #     n_splits=10,
+    #     max_retries=100
+    # )
 
     cell_log_dir = os.path.join(log_dir_path, cell_type)
 
@@ -206,8 +207,8 @@ def main():
         metric='log_loss',
         n_jobs=-1,
         eval_method='cv',
-        split_type='custom',  # Use pre-split folds
-        split=valid_folds,    # Provide the valid folds
+        split_type='group',  # Use pre-split folds
+        groups=train_metadata['sample'],    # Provide the valid folds
         log_training_metric=True,
         early_stop=True,
         seed=239875,

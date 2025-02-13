@@ -64,7 +64,7 @@ def main():
     test_metadata = metadata[metadata['sample'].isin(test_samples)]
 
     # Filter both the training and testing for cell type
-    train_metadata = train_metadata[train_metadata['broad.cell.type' == cell_type]]
+    train_metadata = train_metadata[train_metadata['broad.cell.type'] == cell_type]
     test_metadata = test_metadata[test_metadata['broad.cell.type'] == cell_type]
 
 
@@ -177,23 +177,15 @@ def main():
                 return folds  # Return valid folds
 
         raise ValueError("Unable to generate valid folds after maximum retries.")
-
-    # For task one I am training on all cell types, but testing only on one specific cell type. Therefore, I will subset just the testing sets for cell type:
-    
-    X_train = X_train[X_train['broad.cell.type'] == cell_type]
-    y_train = y_train[y_train['broad.cell.type'] == cell_type]
-
-    X_test = X_test[X_test['broad.cell.type'] == cell_type]
-    y_test = y_test[y_test['broad.cell.type'] == cell_type]
     
     # Generate valid folds
-    valid_folds = generate_valid_folds(
-        X_train,  # Feature matrix
-        y_train,  # Target variable
-        groups=train_metadata['sample'],  # Group variable
-        n_splits=10,
-        max_retries=100
-    )
+    # valid_folds = generate_valid_folds(
+    #     X_train,  # Feature matrix
+    #     y_train,  # Target variable
+    #     groups=train_metadata['sample'],  # Group variable
+    #     n_splits=10,
+    #     max_retries=100
+    # )
 
     cell_log_dir = os.path.join(log_dir_path, cell_type)
 
@@ -212,8 +204,8 @@ def main():
         metric='log_loss',
         n_jobs=-1,
         eval_method='cv',
-        split_type='custom',  # Use pre-split folds
-        split=valid_folds,    # Provide the valid folds
+        split_type='group',  # Use pre-split folds
+        groups=train_metadata['sample'], 
         log_training_metric=True,
         early_stop=True,
         seed=239875,
@@ -357,7 +349,7 @@ def main():
 
     # Save results
     incremental_results_df = pd.DataFrame(incremental_results)
-    incremental_results_df.to_csv(f'{cell_log_dir}incremental_top_features_metrics.csv', index=False)
+    incremental_results_df.to_csv(f'{cell_log_dir}/incremental_top_features_metrics.csv', index=False)
     print("Incremental evaluation completed successfully")
 
     
