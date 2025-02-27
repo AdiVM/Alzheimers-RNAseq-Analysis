@@ -32,12 +32,12 @@ def main():
         log_file.write(log_message + '\n')
 
     # Load the data
-    metadata = pd.read_parquet('/home/adm808/CellMetadataSyn18485175.parquet')
+    metadata = pd.read_parquet('/home/adm808/New_CellMetadataSyn1848517.parquet')
     print("Metadata is loaded")
 
     # Process APOE genotype as categorical -- Hot encoding of apoe_genotype
-    metadata = pd.get_dummies(metadata, columns=["apoe_genotype"])
-    apoe_genotype_columns = [col for col in metadata.columns if col.startswith("apoe_genotype_")]
+    metadata = pd.get_dummies(metadata, columns=["apoe_genotype_x"])
+    apoe_genotype_columns = [col for col in metadata.columns if col.startswith("apoe_genotype_x_")]
 
 
     # Stratified Shuffle Split based on `sample_id`to split metadata
@@ -102,14 +102,14 @@ def main():
     # Merge the train and test matrices with their respective metadata files
 
     train_data = train_matrix_filtered.merge(
-        train_metadata[['TAG', 'msex', 'sample', 'broad.cell.type', 'alzheimers_or_control'] + apoe_genotype_columns],
+        train_metadata[['TAG', 'msex', 'sample', 'broad.cell.type', 'alzheimers_or_control', 'age_death'] + apoe_genotype_columns],
         left_index=True,
         right_on='TAG',
         how='inner'
     ).set_index('TAG')
     
     test_data = test_matrix_filtered.merge(
-        test_metadata[['TAG', 'msex', 'sample', 'broad.cell.type', 'alzheimers_or_control'] + apoe_genotype_columns],
+        test_metadata[['TAG', 'msex', 'sample', 'broad.cell.type', 'alzheimers_or_control', 'age_death'] + apoe_genotype_columns],
         left_index=True,
         right_on='TAG',
         how='inner'
@@ -196,7 +196,9 @@ def main():
 
     # For task one I am training on all cell types, but testing only on one specific cell type. Therefore, I will subset just the testing sets for cell type:
     
-
+    # Dropping samples from the dataset
+    X_train = X_train.drop(columns=['sample'])
+    X_test = X_test.drop(columns=['sample'])
 
     # Use valid folds in AutoML
     maximal_classifier = AutoML()
