@@ -36,8 +36,8 @@ def main():
     print("Metadata is loaded")
 
     # Process APOE genotype as categorical -- Hot encoding of apoe_genotype
-    metadata = pd.get_dummies(metadata, columns=["apoe_genotype_x"])
-    apoe_genotype_columns = [col for col in metadata.columns if col.startswith("apoe_genotype_x_")]
+    metadata = pd.get_dummies(metadata, columns=["apoe_genotype"])
+    apoe_genotype_columns = [col for col in metadata.columns if col.startswith("apoe_genotype_")]
 
 
     # Stratified Shuffle Split based on `sample_id`to split metadata
@@ -102,14 +102,14 @@ def main():
     # Merge the train and test matrices with their respective metadata files
 
     train_data = train_matrix_filtered.merge(
-        train_metadata[['TAG', 'msex', 'sample', 'broad.cell.type', 'alzheimers_or_control', 'age_death'] + apoe_genotype_columns],
+        train_metadata[['TAG', 'msex', 'sample', 'broad.cell.type', 'alzheimers_or_control', 'age_death', 'educ', 'cts_mmse30_lv', 'pmi'] + apoe_genotype_columns],
         left_index=True,
         right_on='TAG',
         how='inner'
     ).set_index('TAG')
     
     test_data = test_matrix_filtered.merge(
-        test_metadata[['TAG', 'msex', 'sample', 'broad.cell.type', 'alzheimers_or_control', 'age_death'] + apoe_genotype_columns],
+        test_metadata[['TAG', 'msex', 'sample', 'broad.cell.type', 'alzheimers_or_control', 'age_death', 'educ', 'cts_mmse30_lv', 'pmi'] + apoe_genotype_columns],
         left_index=True,
         right_on='TAG',
         how='inner'
