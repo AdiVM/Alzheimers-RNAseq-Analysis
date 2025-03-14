@@ -13,7 +13,7 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import StratifiedGroupKFold
 
-log_dir_path = "/n/groups/patel/adithya/Syn18_Log_Dir_Cell_on_cell/"
+log_dir_path = "/n/groups/patel/adithya/Syn18_Log_Dir_Total_on_cell/"
 LOG_FILE_PATH = os.path.expanduser(f'{log_dir_path}experiment_log.txt')
 
 
@@ -63,8 +63,7 @@ def main():
     train_metadata = metadata[metadata['sample'].isin(train_samples)]
     test_metadata = metadata[metadata['sample'].isin(test_samples)]
 
-    # Filter both the training and testing for cell type
-    train_metadata = train_metadata[train_metadata['broad.cell.type'] == cell_type]
+    # We only want to predict on one cell type but train the model on all cell types so we filter test_metadata
     test_metadata = test_metadata[test_metadata['broad.cell.type'] == cell_type]
 
 
@@ -178,9 +177,11 @@ def main():
 
         raise ValueError("Unable to generate valid folds after maximum retries.")
     
-    # Generate valid folds
+
+    # This seciton is throwing an error, seems like flaml has no argument to create custom folds, must follow approach taken below:
+    # # Generate valid folds
     # valid_folds = generate_valid_folds(
-    #     X_train,  # Feature matrix
+        # X_train,  # Feature matrix
     #     y_train,  # Target variable
     #     groups=train_metadata['sample'],  # Group variable
     #     n_splits=10,
@@ -192,10 +193,12 @@ def main():
     # Create the directory if it doesn’t exist
     os.makedirs(cell_log_dir, exist_ok=True)
 
+
+    # For task one I am training on all cell types, but testing only on one specific cell type. Therefore, I will subset just the testing sets for cell type:
+    
     # Dropping samples from the dataset
     X_train = X_train.drop(columns=['sample'])
     X_test = X_test.drop(columns=['sample'])
-
 
     # Use valid folds in AutoML
     maximal_classifier = AutoML()
@@ -207,7 +210,7 @@ def main():
         n_jobs=-1,
         eval_method='cv',
         split_type='group',  # Use pre-split folds
-        groups=train_metadata['sample'], 
+        groups=train_metadata['sample'],    # Provide the valid folds
         log_training_metric=True,
         early_stop=True,
         seed=239875,
@@ -256,6 +259,7 @@ def main():
     }
 
     pd.DataFrame([metrics]).to_csv(f'{cell_log_dir}/output_csv.csv', index=False)
+    
 
 
     # Feature importance for top 100 features and avoid mismatch error
@@ -351,7 +355,7 @@ def main():
 
     # Save results
     incremental_results_df = pd.DataFrame(incremental_results)
-    incremental_results_df.to_csv(f'{cell_log_dir}/incremental_top_features_metrics.csv', index=False)
+    incremental_results_df.to_csv(f'{cell_log_dir}incremental_top_features_metrics.csv', index=False)
     print("Incremental evaluation completed successfully")
 
     
