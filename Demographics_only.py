@@ -13,21 +13,19 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import StratifiedGroupKFold
 
-log_dir_path = "/n/groups/patel/adithya/Alz_Outputs/Both_no_PMI/F1_Class_weight/"
+log_dir_path = "/n/groups/patel/adithya/Alz_Outputs/F1_Demographics_Only/"
 LOG_FILE_PATH = os.path.expanduser(f'{log_dir_path}experiment_log.txt')
 
 
 def main():
     parser = argparse.ArgumentParser(description='Run AutoML on combined gene expression and metadata data')
     parser.add_argument('--exp_type', type=str, choices=['maximal'], required=True, help='Specify experiment type')
-    parser.add_argument('--cell_type', type=str, required=True, help='Specify the cell type to train on')
     args = parser.parse_args()
     
     exp_type = args.exp_type
-    cell_type = args.cell_type
 
 
-    log_message = f"Processing {exp_type} data with {cell_type} cells using full integration of gene and metadata features"
+    log_message = f"Processing {exp_type} data using full metadata features"
     with open(LOG_FILE_PATH, 'a') as log_file:
         log_file.write(log_message + '\n')
 
@@ -63,81 +61,24 @@ def main():
     train_metadata = metadata[metadata['sample'].isin(train_samples)]
     test_metadata = metadata[metadata['sample'].isin(test_samples)]
 
-    # Filter both the training and testing for cell type -- This is cell on cell prediction
-    train_metadata = train_metadata[train_metadata['broad.cell.type'] == cell_type]
-    test_metadata = test_metadata[test_metadata['broad.cell.type'] == cell_type]
-
+    # Drop duplicate samples to retain one row per person
+    train_metadata = train_metadata.drop_duplicates(subset='sample')
+    test_metadata = test_metadata.drop_duplicates(subset='sample')
 
     print(f"Number of cases in training: {sum(train_metadata['alzheimers_or_control'])}")
     print(f"Number of cases in test: {sum(test_metadata['alzheimers_or_control'])}")
+    
+    
+    # Choose only demographic features
+    demographic_features = ['msex', 'sample', 'age_death', 'educ', 'cts_mmse30_lv', 'pmi'] + apoe_genotype_columns
 
-    # Function to select and drop missing genes
-    def select_missing_genes(filtered_matrix):
-        mean_threshold = 1
-        missingness_threshold = 95
-    
-        mean_gene_expression = filtered_matrix.mean(axis=0)
-        missingness = (filtered_matrix == 0).sum(axis=0) / filtered_matrix.shape[0] * 100
-        null_expression = (missingness > missingness_threshold) & (mean_gene_expression < mean_threshold)
-        genes_to_drop = filtered_matrix.columns[null_expression].tolist()
-    
-        return genes_to_drop
-
-    # Load and transpose gene expression matrices
-    gene_matrix = pd.read_parquet('/home/adm808/NormalizedCellMatrixSyn18485175.parquet').T
-    print("Gene matrix is loaded")
-    print(gene_matrix.iloc[:, :5].head())
-
-    # Defining training and testing matrices
-    train_matrix = gene_matrix.loc[train_metadata['TAG']]
-    test_matrix = gene_matrix.loc[test_metadata['TAG']]
-
-    print("Printing dimensionality of X_train and X_test initallly")
-    print(train_matrix.shape)
-    print(test_matrix.shape)
-    
-    # Filter missing genes
-    train_matrix_filtered = train_matrix.drop(select_missing_genes(train_matrix), axis=1)
-    test_matrix_filtered = test_matrix.drop(select_missing_genes(test_matrix), axis=1)
-    
-    # Merge the train and test matrices with their respective metadata files
-
-    train_data = train_matrix_filtered.merge(
-        train_metadata[['TAG', 'msex', 'sample', 'broad.cell.type', 'alzheimers_or_control', 'age_death', 'educ', 'cts_mmse30_lv', 'pmi'] + apoe_genotype_columns],
-        left_index=True,
-        right_on='TAG',
-        how='inner'
-    ).set_index('TAG')
-    
-    test_data = test_matrix_filtered.merge(
-        test_metadata[['TAG', 'msex', 'sample', 'broad.cell.type', 'alzheimers_or_control', 'age_death', 'educ', 'cts_mmse30_lv', 'pmi'] + apoe_genotype_columns],
-        left_index=True,
-        right_on='TAG',
-        how='inner'
-    ).set_index('TAG')
-    
-    
-    # Clean column names for model compatibility
-    train_data.columns = train_data.columns.str.replace(r'[^A-Za-z0-9_]+', '', regex=True)
-    test_data.columns = test_data.columns.str.replace(r'[^A-Za-z0-9_]+', '', regex=True)
-    
-    # Ensure common genes are used between training and testing sets
-    common_genes = train_data.columns.intersection(test_data.columns)
-    X_train = train_data[common_genes]
-    X_test = test_data[common_genes]
-
-    # Drop the alzheimers or control column from the dataset
-    X_train = X_train.drop(columns=['alzheimers_or_control'])
-    X_test = X_test.drop(columns=['alzheimers_or_control'])
-    
-    # Map original column names to cleaned names for later interpretability
-    original_columns = common_genes  # Use common genes after filtering
-    cleaned_columns = original_columns.str.replace(r'[^A-Za-z0-9_]+', '', regex=True)
-    column_mapping = dict(zip(cleaned_columns, original_columns))
-    
     # Define the target variable
-    y_train = train_data['alzheimers_or_control']
-    y_test = test_data['alzheimers_or_control']
+    y_train = train_metadata['alzheimers_or_control']
+    y_test = test_metadata['alzheimers_or_control']
+
+    X_train = train_metadata[demographic_features].copy()
+    X_test = test_metadata[demographic_features].copy()
+
 
     print("Printing dimensionality of X_train and X_test post filtering and merging")
 
@@ -150,7 +91,7 @@ def main():
     from sklearn.model_selection import StratifiedGroupKFold
     import numpy as np
 
-    def generate_valid_folds(X, y, groups, n_splits=10, max_retries=100):
+    def generate_valid_folds(X, y, groups, n_splits=5, max_retries=100):
         """
         Generate valid folds for StratifiedGroupKFold to ensure no fold has only one class.
         Retries until valid folds are created.
@@ -187,43 +128,38 @@ def main():
     #     max_retries=100
     # )
 
-    cell_log_dir = os.path.join(log_dir_path, cell_type)
+    cell_log_dir = os.path.join(log_dir_path, "demographics_model")
 
     # Create the directory if it doesn’t exist
     os.makedirs(cell_log_dir, exist_ok=True)
 
     # Dropping samples from the dataset
-    X_train = X_train.drop(columns=['sample', 'cts_mmse30_lv', 'pmi'])
-    X_test = X_test.drop(columns=['sample', 'cts_mmse30_lv', 'pmi'])
+    X_train = X_train.drop(columns=['sample'])
+    X_test = X_test.drop(columns=['sample'])
 
-    class_weight_ratio = (len(y_train) / (2 * np.bincount(y_train)))  # inverse frequency
+    class_weight_ratio = (len(y_train) / (2 * np.bincount(y_train.astype(int))))  # inverse frequency
     sample_weight = np.array([class_weight_ratio[label] for label in y_train])
 
 
     # Use valid folds in AutoML
     maximal_classifier = AutoML()
-
-    automl_settings = {
-        "X_train": X_train,
-        "y_train": y_train,
-        "sample_weight": sample_weight,
-        "task": "classification",
-        "time_budget": 3600,
-        "metric": 'log_loss',
-        "n_jobs": -1,
-        "eval_method": 'cv',
-        "split_type": 'group',
-        "groups": train_metadata['sample'],
-        "log_training_metric": True,
-        "early_stop": True,
-        "seed": 234567,
-        "estimator_list": ['lgbm'],
-        "model_history": True,
-        "log_file_name": f"{cell_log_dir}/all_features_log.txt"
-    }
-
-    # Fit
-    maximal_classifier.fit(**automl_settings)
+    maximal_classifier.fit(
+        X_train, y_train,
+        sample_weight=sample_weight,
+        task="classification",
+        time_budget=3600,
+        metric='log_loss',
+        n_jobs=-1,
+        eval_method='cv',
+        split_type='group',
+        groups=train_metadata['sample'],
+        log_training_metric=True,
+        early_stop=True,
+        seed=234567,
+        estimator_list=['lgbm'],
+        model_history=True,
+        log_file_name=f"{cell_log_dir}/all_features_log.txt"
+    )
 
 
 
@@ -316,6 +252,10 @@ def main():
     except ValueError as e:
         print(f"Error extracting features: {e}")
         return  # Exit if feature importances are unavailable
+    
+
+    # Simple identity column mapping (no renaming needed for demographics model)
+    column_mapping = {col: col for col in X_train.columns}
 
     # Map features back to original names for interpretability
     top_features_original = [column_mapping.get(feature, feature) for feature in top_features_cleaned]
@@ -323,37 +263,34 @@ def main():
     # --- Start Incremental Evaluation ---
     incremental_results = []
 
-    for i, feature_subset in enumerate(top_features_cleaned[:10], start=1):
-        print(f"Retraining model from scratch with top {i} features")
+    for i in range(1, min(8, len(top_features_cleaned)+1)):
         current_features = top_features_cleaned[:i]
+        print(f"Retraining model from scratch with top {i} features")
         
         # Subset data
         X_train_top_i = X_train[current_features]
         X_test_top_i = X_test[current_features]
-
-        # Define settings dictionary
-        automl_settings = {
-            "X_train": X_train_top_i,
-            "y_train": y_train,
-            "sample_weight": sample_weight,
-            "task": "classification",
-            "time_budget": 600,
-            "metric": 'log_loss',
-            "n_jobs": -1,
-            "eval_method": 'cv',
-            "split_type": 'group',
-            "groups": train_metadata['sample'],
-            "log_training_metric": True,
-            "early_stop": True,
-            "seed": 234567,
-            "estimator_list": ['lgbm'],
-            "model_history": True,
-            "log_file_name": f"{cell_log_dir}/top_{i}_features_log.txt",
-        }
-
+        
         # Retrain from scratch
         incremental_classifier = AutoML()
-        incremental_classifier.fit(**automl_settings)
+        incremental_classifier.fit(
+            X_train_top_i,
+            y_train,
+            sample_weight=sample_weight,
+            task="classification",
+            time_budget=600,  # Shorter budget set for smaller feature set
+            metric='log_loss',
+            n_jobs=-1,
+            eval_method='cv',
+            split_type='group',
+            groups=train_metadata['sample'],
+            log_training_metric=True,
+            early_stop=True,
+            seed=234567,
+            estimator_list=['lgbm'],
+            model_history=True,
+            log_file_name=f"{cell_log_dir}/top_{i}_features_log.txt"
+        )
 
         # Predict probabilities
         y_prob_train_i = incremental_classifier.predict_proba(X_train_top_i)[:, 1]
