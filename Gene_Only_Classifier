@@ -13,7 +13,7 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import StratifiedGroupKFold
 
-log_dir_path = "/n/groups/patel/adithya/Alz_Outputs/Both_with_PMI/Cell_on_cell/"
+log_dir_path = "/n/groups/patel/adithya/Alz_Outputs/Genes_Only/Cell_on_cell/"
 LOG_FILE_PATH = os.path.expanduser(f'{log_dir_path}experiment_log.txt')
 
 
@@ -193,8 +193,8 @@ def main():
     os.makedirs(cell_log_dir, exist_ok=True)
 
     # Dropping samples from the dataset
-    X_train = X_train.drop(columns=['sample'])
-    X_test = X_test.drop(columns=['sample'])
+    X_train = X_train.drop(columns=['sample', 'cts_mmse30_lv', 'pmi', 'msex', 'age_death', 'educ', 'broad.cell.type'])
+    X_test = X_test.drop(columns=['sample', 'cts_mmse30_lv', 'pmi', 'msex', 'age_death', 'educ', 'broad.cell.type'])
 
 
     # Use valid folds in AutoML

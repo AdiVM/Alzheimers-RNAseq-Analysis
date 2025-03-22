@@ -13,7 +13,7 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import StratifiedGroupKFold
 
-log_dir_path = "/n/groups/patel/adithya/Alz_Outputs/Both_with_PMI/Cell_on_cell/"
+log_dir_path = "/n/groups/patel/adithya/Alz_Outputs/Both_no_PMI/F1_Class_weight/"
 LOG_FILE_PATH = os.path.expanduser(f'{log_dir_path}experiment_log.txt')
 
 
@@ -193,27 +193,37 @@ def main():
     os.makedirs(cell_log_dir, exist_ok=True)
 
     # Dropping samples from the dataset
-    X_train = X_train.drop(columns=['sample'])
-    X_test = X_test.drop(columns=['sample'])
+    X_train = X_train.drop(columns=['sample', 'cts_mmse30_lv', 'pmi'])
+    X_test = X_test.drop(columns=['sample', 'cts_mmse30_lv', 'pmi'])
+
+    class_weight_ratio = (len(y_train) / (2 * np.bincount(y_train)))  # inverse frequency
+    sample_weight = np.array([class_weight_ratio[label] for label in y_train])
 
 
     # Use valid folds in AutoML
     maximal_classifier = AutoML()
     maximal_classifier.fit(
         X_train, y_train,
+        sample_weight=sample_weight,
         task="classification",
-        time_budget=12000,
+        time_budget=3600,
         metric='log_loss',
         n_jobs=-1,
         eval_method='cv',
-        split_type='group',  # Use pre-split folds
-        groups=train_metadata['sample'], 
+        split_type='group',
+        groups=train_metadata['sample'],
         log_training_metric=True,
         early_stop=True,
-        seed=239875,
+        seed=234567,
         estimator_list=['lgbm'],
         model_history=True,
-        log_file_name=f"{cell_log_dir}/all_features_log.txt"
+        log_file_name=f"{cell_log_dir}/all_features_log.txt",
+        config_constraints={
+            "lgbm": {
+                "reg_alpha": [0.1, 1, 10], # L1 penalty
+                "reg_lambda": [0.1, 1, 10] # L2 penalty
+            }
+        }
     )
 
 
@@ -224,15 +234,23 @@ def main():
     joblib.dump(maximal_classifier, f'{cell_log_dir}/maximal_classifier.joblib')
 
 
-    # Predictions and optimal threshold using Youden's J statistic
+    # Predictions and optimal threshold using F1 Precision-Recall Tradeoff Statistic
     y_prob_train = maximal_classifier.predict_proba(X_train)[:, 1]
     y_prob_test = maximal_classifier.predict_proba(X_test)[:, 1]
 
-    thresholds = np.arange(0.0, 1.0, 0.01)
-    youden_stats = [(recall_score(y_train, (y_prob_train >= t).astype(int)) +
-                     recall_score(y_train, (y_prob_train >= t).astype(int), pos_label=0) - 1)
-                    for t in thresholds]
-    optimal_threshold = thresholds[np.argmax(youden_stats)]
+    from sklearn.metrics import precision_recall_curve
+
+    # Get precision-recall curve and thresholds
+    precision, recall, thresholds = precision_recall_curve(y_train, y_prob_train)
+
+    # Avoid divide-by-zero
+    f1_scores = 2 * (precision * recall) / (precision + recall + 1e-8)
+
+    # Best threshold is the one with max F1
+    optimal_index = np.argmax(f1_scores)
+    optimal_threshold = thresholds[optimal_index]
+
+    print(f"Optimal threshold from Precision-Recall curve: {optimal_threshold}")
     
     y_pred_train_optimal = (y_prob_train >= optimal_threshold).astype(int)
     y_pred_test_optimal = (y_prob_test >= optimal_threshold).astype(int)
@@ -306,19 +324,39 @@ def main():
     # --- Start Incremental Evaluation ---
     incremental_results = []
 
-    for i, feature_subset in enumerate(top_features_cleaned[:100], start=1):
-        print(f"Retraining model with top {i} features")
+    for i, feature_subset in enumerate(top_features_cleaned[:10], start=1):
+        print(f"Retraining model from scratch with top {i} features")
         current_features = top_features_cleaned[:i]
         
         # Subset data
         X_train_top_i = X_train[current_features]
         X_test_top_i = X_test[current_features]
         
-        # Retrain using the existing log
+        # Retrain from scratch
         incremental_classifier = AutoML()
-        incremental_classifier.retrain_from_log(log_file_name=f'{cell_log_dir}/all_features_log.txt', 
-        X_train=X_train_top_i, 
-        y_train=y_train
+        incremental_classifier.fit(
+            X_train_top_i,
+            y_train,
+            sample_weight=sample_weight,
+            task="classification",
+            time_budget=600,  # Shorter budget set for smaller feature set
+            metric='log_loss',
+            n_jobs=-1,
+            eval_method='cv',
+            split_type='group',
+            groups=train_metadata['sample'],
+            log_training_metric=True,
+            early_stop=True,
+            seed=234567,
+            estimator_list=['lgbm'],
+            model_history=True,
+            log_file_name=f"{cell_log_dir}/top_{i}_features_log.txt",
+            config_constraints={
+                "lgbm": {
+                    "reg_alpha": [0.1, 1, 10],
+                    "reg_lambda": [0.1, 1, 10]
+                }
+            }
         )
 
         # Predict probabilities
@@ -353,6 +391,22 @@ def main():
     incremental_results_df = pd.DataFrame(incremental_results)
     incremental_results_df.to_csv(f'{cell_log_dir}/incremental_top_features_metrics.csv', index=False)
     print("Incremental evaluation completed successfully")
+
+    # Plot Test ROC AUC vs Number of Features
+    plt.figure(figsize=(8, 6))
+    plt.plot(incremental_results_df['num_features'], incremental_results_df['test_roc_auc'], marker='o')
+    plt.title('Test ROC AUC vs Number of Top Features')
+    plt.xlabel('Number of Top Features')
+    plt.ylabel('Test ROC AUC')
+    plt.grid(True)
+    plt.tight_layout()
+
+    # Saving plot
+    plot_path = os.path.join(cell_log_dir, 'test_auc_vs_num_features.png')
+    plt.savefig(plot_path)
+    plt.close()
+
+    print(f"Saved AUC vs. feature count plot to: {plot_path}")
 
 
     # Create a DataFrame to store probabilities and classifications

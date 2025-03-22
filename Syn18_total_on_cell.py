@@ -13,7 +13,7 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import StratifiedGroupKFold
 
-log_dir_path = "/n/groups/patel/adithya/Syn18_Log_Dir_Total_on_cell/"
+log_dir_path = "/n/groups/patel/adithya/Alz_Outputs/Both_with_PMI/Total_on_cell/"
 LOG_FILE_PATH = os.path.expanduser(f'{log_dir_path}experiment_log.txt')
 
 
@@ -355,8 +355,52 @@ def main():
 
     # Save results
     incremental_results_df = pd.DataFrame(incremental_results)
-    incremental_results_df.to_csv(f'{cell_log_dir}incremental_top_features_metrics.csv', index=False)
+    incremental_results_df.to_csv(f'{cell_log_dir}/incremental_top_features_metrics.csv', index=False)
     print("Incremental evaluation completed successfully")
+
+    # Create a DataFrame to store probabilities and classifications
+    train_predictions_df = pd.DataFrame({
+        'TAG': X_train.index,
+        'true_label': y_train.values,
+        'predicted_label': y_pred_train_optimal,
+        'predicted_proba': y_prob_train
+    })
+
+    test_predictions_df = pd.DataFrame({
+        'TAG': X_test.index,
+        'true_label': y_test.values,
+        'predicted_label': y_pred_test_optimal,
+        'predicted_proba': y_prob_test
+    })
+
+    # Define classification categories
+    train_predictions_df['classification_category'] = np.select(
+        [
+            (train_predictions_df['true_label'] == 1) & (train_predictions_df['predicted_label'] == 1),  # True Positive
+            (train_predictions_df['true_label'] == 1) & (train_predictions_df['predicted_label'] == 0),  # False Negative
+            (train_predictions_df['true_label'] == 0) & (train_predictions_df['predicted_label'] == 0),  # True Negative
+            (train_predictions_df['true_label'] == 0) & (train_predictions_df['predicted_label'] == 1)   # False Positive
+        ],
+        ['TP', 'FN', 'TN', 'FP'],
+        default='Unknown'
+    )
+
+    test_predictions_df['classification_category'] = np.select(
+        [
+            (test_predictions_df['true_label'] == 1) & (test_predictions_df['predicted_label'] == 1),
+            (test_predictions_df['true_label'] == 1) & (test_predictions_df['predicted_label'] == 0),
+            (test_predictions_df['true_label'] == 0) & (test_predictions_df['predicted_label'] == 0),
+            (test_predictions_df['true_label'] == 0) & (test_predictions_df['predicted_label'] == 1)
+        ],
+        ['TP', 'FN', 'TN', 'FP'],
+        default='Unknown'
+    )
+
+    # Save predictions to CSV files
+    train_predictions_df.to_csv(f'{cell_log_dir}/train_predictions.csv', index=False)
+    test_predictions_df.to_csv(f'{cell_log_dir}/test_predictions.csv', index=False)
+
+    print("Prediction probabilities saved successfully.")
 
     
 
