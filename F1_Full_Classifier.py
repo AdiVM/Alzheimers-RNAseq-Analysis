@@ -13,7 +13,7 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import StratifiedGroupKFold
 
-log_dir_path = "/n/groups/patel/adithya/Alz_Outputs/Both_no_PMI/F1_Class_weight/"
+log_dir_path = "/n/groups/patel/adithya/Alz_Outputs/Both_no_PMI/F1_Class_weight_less_features/"
 LOG_FILE_PATH = os.path.expanduser(f'{log_dir_path}experiment_log.txt')
 
 
@@ -73,8 +73,8 @@ def main():
 
     # Function to select and drop missing genes
     def select_missing_genes(filtered_matrix):
-        mean_threshold = 1
-        missingness_threshold = 95
+        mean_threshold = 2
+        missingness_threshold = 90
     
         mean_gene_expression = filtered_matrix.mean(axis=0)
         missingness = (filtered_matrix == 0).sum(axis=0) / filtered_matrix.shape[0] * 100
@@ -323,7 +323,7 @@ def main():
     # --- Start Incremental Evaluation ---
     incremental_results = []
 
-    for i, feature_subset in enumerate(top_features_cleaned[:10], start=1):
+    for i, feature_subset in enumerate(top_features_cleaned[:20], start=1):
         print(f"Retraining model from scratch with top {i} features")
         current_features = top_features_cleaned[:i]
         
@@ -358,9 +358,15 @@ def main():
         # Predict probabilities
         y_prob_train_i = incremental_classifier.predict_proba(X_train_top_i)[:, 1]
         y_prob_test_i = incremental_classifier.predict_proba(X_test_top_i)[:, 1]
-        
-        y_pred_train_i = (y_prob_train_i >= optimal_threshold).astype(int)
-        y_pred_test_i = (y_prob_test_i >= optimal_threshold).astype(int)
+
+        # Dynamically calculate best threshold based on train set
+        precision, recall, thresholds = precision_recall_curve(y_train, y_prob_train_i)
+        f1_scores = 2 * (precision * recall) / (precision + recall + 1e-8)
+        optimal_index = np.argmax(f1_scores)
+        dynamic_threshold = thresholds[optimal_index]
+
+        y_pred_train_i = (y_prob_train_i >= dynamic_threshold).astype(int)
+        y_pred_test_i = (y_prob_test_i >= dynamic_threshold).astype(int)
 
         # Collect metrics
         result = {

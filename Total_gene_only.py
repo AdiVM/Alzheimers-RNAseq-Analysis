@@ -1,4 +1,3 @@
-## This script is used to run AutoML on just metadata variables on a cell type basis. 
 import argparse
 import os
 import pandas as pd
@@ -14,22 +13,22 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import StratifiedGroupKFold
 
-log_dir_path = "/n/groups/patel/adithya/Alz_Outputs/Final_Outputs/Demo_cell_on_cell/"
+log_dir_path = "/n/groups/patel/adithya/Alz_Outputs/Final_Outputs/Genes_total/"
 LOG_FILE_PATH = os.path.expanduser(f'{log_dir_path}experiment_log.txt')
 
 
 def main():
     parser = argparse.ArgumentParser(description='Run AutoML on combined gene expression and metadata data')
     parser.add_argument('--exp_type', type=str, choices=['maximal'], required=True, help='Specify experiment type')
-    parser.add_argument('--cell_type', type=str, required=True, help='Specify the cell type to train on')
+    #parser.add_argument('--cell_type', type=str, required=True, help='Specify the cell type to train on')
     args = parser.parse_args()
     
     exp_type = args.exp_type
-    cell_type = args.cell_type
+    #cell_type = args.cell_type
 
 
-    log_message = f"Processing {exp_type} data with {cell_type} cells using full integration of gene and metadata features"
-    #log_message = f"Processing {exp_type} data with all cell types using full integration of gene and metadata features"
+    #log_message = f"Processing {exp_type} data with {cell_type} cells using full integration of gene and metadata features"
+    log_message = f"Processing {exp_type} data with all cell types using full integration of gene and metadata features"
     with open(LOG_FILE_PATH, 'a') as log_file:
         log_file.write(log_message + '\n')
 
@@ -66,28 +65,79 @@ def main():
     test_metadata = metadata[metadata['sample'].isin(test_samples)]
 
     # Filter both the training and testing for cell type -- This is cell on cell prediction
-    train_metadata = train_metadata[train_metadata['broad.cell.type'] == cell_type]
-    test_metadata = test_metadata[test_metadata['broad.cell.type'] == cell_type]
+    # train_metadata = train_metadata[train_metadata['broad.cell.type'] == cell_type]
+    # test_metadata = test_metadata[test_metadata['broad.cell.type'] == cell_type]
 
 
     print(f"Number of cases in training: {sum(train_metadata['alzheimers_or_control'])}")
     print(f"Number of cases in test: {sum(test_metadata['alzheimers_or_control'])}")
+
+    # Function to select and drop missing genes
+    def select_missing_genes(filtered_matrix):
+        mean_threshold = 2
+        missingness_threshold = 90
+    
+        mean_gene_expression = filtered_matrix.mean(axis=0)
+        missingness = (filtered_matrix == 0).sum(axis=0) / filtered_matrix.shape[0] * 100
+        null_expression = (missingness > missingness_threshold) & (mean_gene_expression < mean_threshold)
+        genes_to_drop = filtered_matrix.columns[null_expression].tolist()
+    
+        return genes_to_drop
+
+    # Load and transpose gene expression matrices
+    gene_matrix = pd.read_parquet('/home/adm808/NormalizedCellMatrixSyn18485175.parquet').T
+    print("Gene matrix is loaded")
+    print(gene_matrix.iloc[:, :5].head())
+
+    # Defining training and testing matrices
+    train_matrix = gene_matrix.loc[train_metadata['TAG']]
+    test_matrix = gene_matrix.loc[test_metadata['TAG']]
+
+    print("Printing dimensionality of X_train and X_test initallly")
+    print(train_matrix.shape)
+    print(test_matrix.shape)
+    
+    # Filter missing genes
+    train_matrix_filtered = train_matrix.drop(select_missing_genes(train_matrix), axis=1)
+    test_matrix_filtered = test_matrix.drop(select_missing_genes(test_matrix), axis=1)
     
     # Merge the train and test matrices with their respective metadata files
 
-    train_data = train_metadata.set_index('TAG')
-    test_data = test_metadata.set_index('TAG')
+    train_data = train_matrix_filtered.merge(
+        train_metadata[['TAG', 'msex', 'sample', 'broad.cell.type', 'alzheimers_or_control', 'age_death', 'educ', 'cts_mmse30_lv', 'pmi'] + apoe_genotype_columns],
+        left_index=True,
+        right_on='TAG',
+        how='inner'
+    ).set_index('TAG')
     
+    test_data = test_matrix_filtered.merge(
+        test_metadata[['TAG', 'msex', 'sample', 'broad.cell.type', 'alzheimers_or_control', 'age_death', 'educ', 'cts_mmse30_lv', 'pmi'] + apoe_genotype_columns],
+        left_index=True,
+        right_on='TAG',
+        how='inner'
+    ).set_index('TAG')
 
 
-    demographic_columns = ['msex', 'sample', 'broad.cell.type', 'alzheimers_or_control', 'age_death', 'educ','cts_mmse30_lv', 'pmi'] + apoe_genotype_columns
-    X_train = train_data[demographic_columns].copy()
-    X_test = test_data[demographic_columns].copy()
+    # Clean column names for model compatibility
+    train_data.columns = train_data.columns.str.replace(r'[^A-Za-z0-9_]+', '', regex=True)
+    test_data.columns = test_data.columns.str.replace(r'[^A-Za-z0-9_]+', '', regex=True)
+
+    # Update apoe column names to ensure APOE genotype is acutally dropped
+    apoe_genotype_columns = [col for col in train_data.columns if col.startswith("apoe_genotype_")]
     
+    # Ensure common genes are used between training and testing sets
+    common_genes = train_data.columns.intersection(test_data.columns)
+    X_train = train_data[common_genes]
+    X_test = test_data[common_genes]
 
     # Drop the alzheimers or control column from the dataset
     X_train = X_train.drop(columns=['alzheimers_or_control'])
     X_test = X_test.drop(columns=['alzheimers_or_control'])
+    
+    # Map original column names to cleaned names for later interpretability
+    original_columns = common_genes  # Use common genes after filtering
+    cleaned_columns = original_columns.str.replace(r'[^A-Za-z0-9_]+', '', regex=True)
+    column_mapping = dict(zip(cleaned_columns, original_columns))
     
     # Define the target variable
     y_train = train_data['alzheimers_or_control']
@@ -113,16 +163,18 @@ def main():
     X_test.age_death = X_test.age_death.astype(float)
 
 
-    cell_log_dir = os.path.join(log_dir_path, cell_type)
-    # cell_log_dir = os.path.join(log_dir_path, 'all_cell_types')
+    #cell_log_dir = os.path.join(log_dir_path, cell_type)
+    cell_log_dir = os.path.join(log_dir_path, 'all_cell_types')
 
     # Create the directory if it doesn’t exist
     os.makedirs(cell_log_dir, exist_ok=True)
 
-    # Dropping samples from the dataset
-    X_train = X_train.drop(columns=['sample', 'cts_mmse30_lv', ])
-    ['msex', 'sample', 'broad.cell.type', 'alzheimers_or_control', 'age_death', 'educ','cts_mmse30_lv', 'pmi'] + apoe_genotype_columns
-    X_test = X_test.drop(columns=['sample', 'cts_mmse30_lv'])
+    # Define metadata columns to drop (cleaned versions)
+    cleaned_columns_to_drop = ['msex', 'sample', 'broadcelltype', 'age_death', 'educ', 'cts_mmse30_lv', 'pmi'] + apoe_genotype_columns
+
+    # Drop only those columns that exist (prevent KeyError)
+    X_train = X_train.drop(columns=[col for col in cleaned_columns_to_drop if col in X_train.columns])
+    X_test = X_test.drop(columns=[col for col in cleaned_columns_to_drop if col in X_test.columns])
 
     class_weight_ratio = (len(y_train) / (2 * np.bincount(y_train)))  # inverse frequency
     sample_weight = np.array([class_weight_ratio[label] for label in y_train])
@@ -292,7 +344,7 @@ def main():
         return  # Exit if feature importances are unavailable
 
     # Map features back to original names for interpretability
-    # top_features_original = [column_mapping.get(feature, feature) for feature in top_features_cleaned]
+    top_features_original = [column_mapping.get(feature, feature) for feature in top_features_cleaned]
 
     # --- Start Incremental Evaluation ---
     incremental_results = []

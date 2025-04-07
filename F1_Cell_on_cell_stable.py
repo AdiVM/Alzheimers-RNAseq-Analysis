@@ -1,4 +1,3 @@
-## This script is used to run AutoML on just metadata variables on a cell type basis. 
 import argparse
 import os
 import pandas as pd
@@ -14,7 +13,8 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import StratifiedGroupKFold
 
-log_dir_path = "/n/groups/patel/adithya/Alz_Outputs/Final_Outputs/Demo_cell_on_cell/"
+
+log_dir_path = "/n/groups/patel/adithya/Alz_Outputs/Final_Outputs/Cell_on_cell_nopmi_rfe/"
 LOG_FILE_PATH = os.path.expanduser(f'{log_dir_path}experiment_log.txt')
 
 
@@ -26,6 +26,10 @@ def main():
     
     exp_type = args.exp_type
     cell_type = args.cell_type
+
+    NUM_RUNS = 5
+    results_list = []
+    all_test_predictions = []
 
 
     log_message = f"Processing {exp_type} data with {cell_type} cells using full integration of gene and metadata features"
@@ -72,22 +76,88 @@ def main():
 
     print(f"Number of cases in training: {sum(train_metadata['alzheimers_or_control'])}")
     print(f"Number of cases in test: {sum(test_metadata['alzheimers_or_control'])}")
+
+    # Function to select and drop missing genes
+    def select_missing_genes(filtered_matrix):
+        mean_threshold = 2
+        missingness_threshold = 90
+    
+        mean_gene_expression = filtered_matrix.mean(axis=0)
+        missingness = (filtered_matrix == 0).sum(axis=0) / filtered_matrix.shape[0] * 100
+        null_expression = (missingness > missingness_threshold) & (mean_gene_expression < mean_threshold)
+        genes_to_drop = filtered_matrix.columns[null_expression].tolist()
+    
+        return genes_to_drop
+
+    # Load and transpose gene expression matrices
+    gene_matrix = pd.read_parquet('/home/adm808/NormalizedCellMatrixSyn18485175.parquet').T
+    print("Gene matrix is loaded")
+    print(gene_matrix.iloc[:, :5].head())
+
+    # Defining training and testing matrices
+    train_matrix = gene_matrix.loc[train_metadata['TAG']]
+    test_matrix = gene_matrix.loc[test_metadata['TAG']]
+
+    print("Printing dimensionality of X_train and X_test initallly")
+    print(train_matrix.shape)
+    print(test_matrix.shape)
+
+    # Filter missing genes
+    genes_to_drop = select_missing_genes(train_matrix)
+    train_matrix_filtered = train_matrix.drop(columns=genes_to_drop)
+    test_matrix_filtered = test_matrix.drop(columns=[g for g in genes_to_drop if g in test_matrix.columns])
+
+    from sklearn.feature_selection import RFE
+    from sklearn.linear_model import LogisticRegression
+
+    # Run RFE on gene matrix only (before metadata merge)
+    rfe_estimator = LogisticRegression(max_iter=1000, solver='saga')
+    selector = RFE(estimator=rfe_estimator, n_features_to_select=500, step=0.1, verbose=1)
+
+    # Subset and match target labels
+    X_rfe = train_matrix_filtered.copy()
+    y_rfe = train_metadata.set_index('TAG').loc[X_rfe.index]['alzheimers_or_control']
+
+    selector.fit(X_rfe, y_rfe)
+    selected_genes = X_rfe.columns[selector.support_]
+
+    train_matrix_filtered = train_matrix_filtered[selected_genes]
+    test_matrix_filtered = test_matrix_filtered[selected_genes]
+
     
     # Merge the train and test matrices with their respective metadata files
 
-    train_data = train_metadata.set_index('TAG')
-    test_data = test_metadata.set_index('TAG')
+    train_data = train_matrix_filtered.merge(
+        train_metadata[['TAG', 'msex', 'sample', 'broad.cell.type', 'alzheimers_or_control', 'age_death', 'educ', 'cts_mmse30_lv', 'pmi'] + apoe_genotype_columns],
+        left_index=True,
+        right_on='TAG',
+        how='inner'
+    ).set_index('TAG')
     
-
-
-    demographic_columns = ['msex', 'sample', 'broad.cell.type', 'alzheimers_or_control', 'age_death', 'educ','cts_mmse30_lv', 'pmi'] + apoe_genotype_columns
-    X_train = train_data[demographic_columns].copy()
-    X_test = test_data[demographic_columns].copy()
+    test_data = test_matrix_filtered.merge(
+        test_metadata[['TAG', 'msex', 'sample', 'broad.cell.type', 'alzheimers_or_control', 'age_death', 'educ', 'cts_mmse30_lv', 'pmi'] + apoe_genotype_columns],
+        left_index=True,
+        right_on='TAG',
+        how='inner'
+    ).set_index('TAG')
     
+        # Clean column names for model compatibility
+    train_data.columns = train_data.columns.str.replace(r'[^A-Za-z0-9_]+', '', regex=True)
+    test_data.columns = test_data.columns.str.replace(r'[^A-Za-z0-9_]+', '', regex=True)
+    
+    # Ensure common genes are used between training and testing sets
+    common_genes = train_data.columns.intersection(test_data.columns)
+    X_train = train_data[common_genes]
+    X_test = test_data[common_genes]
 
     # Drop the alzheimers or control column from the dataset
     X_train = X_train.drop(columns=['alzheimers_or_control'])
     X_test = X_test.drop(columns=['alzheimers_or_control'])
+    
+    # Map original column names to cleaned names for later interpretability
+    original_columns = common_genes  # Use common genes after filtering
+    cleaned_columns = original_columns.str.replace(r'[^A-Za-z0-9_]+', '', regex=True)
+    column_mapping = dict(zip(cleaned_columns, original_columns))
     
     # Define the target variable
     y_train = train_data['alzheimers_or_control']
@@ -100,13 +170,10 @@ def main():
 
 
     #########################################################################
-    # Trying a new method of creating cross validation folds:
-    from sklearn.model_selection import StratifiedGroupKFold
-    import numpy as np
 
 
 
-    # Convert age of death variable to 
+    # Convert age of death variable to float
     X_train.loc[X_train.age_death == '90+', 'age_death'] = 90
     X_test.loc[X_test.age_death == '90+', 'age_death'] = 90
     X_train.age_death = X_train.age_death.astype(float)
@@ -120,12 +187,14 @@ def main():
     os.makedirs(cell_log_dir, exist_ok=True)
 
     # Dropping samples from the dataset
-    X_train = X_train.drop(columns=['sample', 'cts_mmse30_lv', ])
-    ['msex', 'sample', 'broad.cell.type', 'alzheimers_or_control', 'age_death', 'educ','cts_mmse30_lv', 'pmi'] + apoe_genotype_columns
-    X_test = X_test.drop(columns=['sample', 'cts_mmse30_lv'])
+    X_train = X_train.drop(columns=['sample', 'cts_mmse30_lv', 'pmi'])
+    X_test = X_test.drop(columns=['sample', 'cts_mmse30_lv', 'pmi'])
 
     class_weight_ratio = (len(y_train) / (2 * np.bincount(y_train)))  # inverse frequency
     sample_weight = np.array([class_weight_ratio[label] for label in y_train])
+
+    selected_features_df = pd.DataFrame({'selected_feature': selected_genes})
+    selected_features_df.to_csv(os.path.join(cell_log_dir, 'rfe_top_500_features.csv'), index=False)
 
 
     # Use valid folds in AutoML
@@ -149,6 +218,7 @@ def main():
         "model_history": True,
         "log_file_name": f"{cell_log_dir}/all_features_log.txt"
     }
+
 
     # Fit
     maximal_classifier.fit(**automl_settings)
@@ -197,7 +267,8 @@ def main():
         'test_recall': recall_score(y_test, y_pred_test_optimal),
         'test_precision': precision_score(y_test, y_pred_test_optimal),
         'test_f1': f1_score(y_test, y_pred_test_optimal),
-        'test_mcc': matthews_corrcoef(y_test, y_pred_test_optimal)
+        'test_mcc': matthews_corrcoef(y_test, y_pred_test_optimal),
+        'optimal_threshold': optimal_threshold
     }
 
     pd.DataFrame([metrics]).to_csv(f'{cell_log_dir}/output_csv.csv', index=False)
@@ -292,12 +363,12 @@ def main():
         return  # Exit if feature importances are unavailable
 
     # Map features back to original names for interpretability
-    # top_features_original = [column_mapping.get(feature, feature) for feature in top_features_cleaned]
+    top_features_original = [column_mapping.get(feature, feature) for feature in top_features_cleaned]
 
     # --- Start Incremental Evaluation ---
     incremental_results = []
 
-    for i, feature_subset in enumerate(top_features_cleaned[:20], start=1):
+    for i, feature_subset in enumerate(top_features_cleaned[:25], start=1):
         print(f"Retraining model from scratch with top {i} features")
         current_features = top_features_cleaned[:i]
         
@@ -329,6 +400,8 @@ def main():
         incremental_classifier = AutoML()
         incremental_classifier.fit(**automl_settings)
 
+        joblib.dump(incremental_classifier, f"{cell_log_dir}/top_{i}_features_classifier.joblib")
+
         # Predict probabilities
         y_prob_train_i = incremental_classifier.predict_proba(X_train_top_i)[:, 1]
         y_prob_test_i = incremental_classifier.predict_proba(X_test_top_i)[:, 1]
@@ -359,7 +432,8 @@ def main():
             'test_recall': recall_score(y_test, y_pred_test_i),
             'test_precision': precision_score(y_test, y_pred_test_i),
             'test_f1': f1_score(y_test, y_pred_test_i),
-            'test_mcc': matthews_corrcoef(y_test, y_pred_test_i)
+            'test_mcc': matthews_corrcoef(y_test, y_pred_test_i),
+            'optimal_threshold': optimal_threshold
         }
         incremental_results.append(result)
 

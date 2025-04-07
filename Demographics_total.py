@@ -1,4 +1,4 @@
-## This script is used to run AutoML on just metadata variables on a cell type basis. 
+# This runs the demographics only model for the entier dataset, not on a cell by cell basis.
 import argparse
 import os
 import pandas as pd
@@ -14,22 +14,22 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import StratifiedGroupKFold
 
-log_dir_path = "/n/groups/patel/adithya/Alz_Outputs/Final_Outputs/Demo_cell_on_cell/"
+log_dir_path = "/n/groups/patel/adithya/Alz_Outputs/Final_Outputs/Demo_total/"
 LOG_FILE_PATH = os.path.expanduser(f'{log_dir_path}experiment_log.txt')
 
 
 def main():
     parser = argparse.ArgumentParser(description='Run AutoML on combined gene expression and metadata data')
     parser.add_argument('--exp_type', type=str, choices=['maximal'], required=True, help='Specify experiment type')
-    parser.add_argument('--cell_type', type=str, required=True, help='Specify the cell type to train on')
+    #parser.add_argument('--cell_type', type=str, required=True, help='Specify the cell type to train on')
     args = parser.parse_args()
     
     exp_type = args.exp_type
-    cell_type = args.cell_type
+    #cell_type = args.cell_type
 
 
-    log_message = f"Processing {exp_type} data with {cell_type} cells using full integration of gene and metadata features"
-    #log_message = f"Processing {exp_type} data with all cell types using full integration of gene and metadata features"
+    #log_message = f"Processing {exp_type} data with {cell_type} cells using full integration of gene and metadata features"
+    log_message = f"Processing {exp_type} data with all cell types using full integration of gene and metadata features"
     with open(LOG_FILE_PATH, 'a') as log_file:
         log_file.write(log_message + '\n')
 
@@ -66,8 +66,8 @@ def main():
     test_metadata = metadata[metadata['sample'].isin(test_samples)]
 
     # Filter both the training and testing for cell type -- This is cell on cell prediction
-    train_metadata = train_metadata[train_metadata['broad.cell.type'] == cell_type]
-    test_metadata = test_metadata[test_metadata['broad.cell.type'] == cell_type]
+    # train_metadata = train_metadata[train_metadata['broad.cell.type'] == cell_type]
+    # test_metadata = test_metadata[test_metadata['broad.cell.type'] == cell_type]
 
 
     print(f"Number of cases in training: {sum(train_metadata['alzheimers_or_control'])}")
@@ -113,8 +113,8 @@ def main():
     X_test.age_death = X_test.age_death.astype(float)
 
 
-    cell_log_dir = os.path.join(log_dir_path, cell_type)
-    # cell_log_dir = os.path.join(log_dir_path, 'all_cell_types')
+    # cell_log_dir = os.path.join(log_dir_path, cell_type)
+    cell_log_dir = os.path.join(log_dir_path, 'all_cell_types')
 
     # Create the directory if it doesn’t exist
     os.makedirs(cell_log_dir, exist_ok=True)
