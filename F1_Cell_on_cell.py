@@ -222,9 +222,6 @@ def main():
     # Fit
     maximal_classifier.fit(**automl_settings)
 
-
-
-
     # Save the full model using joblib
 
     joblib.dump(maximal_classifier, f'{cell_log_dir}/maximal_classifier.joblib')

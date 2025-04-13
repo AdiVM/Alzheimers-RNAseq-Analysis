@@ -15,7 +15,7 @@ from sklearn.model_selection import StratifiedGroupKFold
 
 # Change this path to use for genes only model but kept the actual file path the same
 
-log_dir_path = "/n/groups/patel/adithya/Alz_Outputs/Final_Outputs/Cell_on_cell_genes_rfe/"
+log_dir_path = "/n/groups/patel/adithya/Alz_Outputs/Final_Outputs/Cell_on_cell_nopmi_rfe/"
 LOG_FILE_PATH = os.path.expanduser(f'{log_dir_path}experiment_log.txt')
 
 
@@ -199,10 +199,9 @@ def main():
     os.makedirs(cell_log_dir, exist_ok=True)
 
     # Dropping columns from the dataset
-    cols_to_drop = ['sample', 'cts_mmse30_lv', 'pmi', 'msex', 'broad.cell.type', 'alzheimers_or_control', 'age_death', 'educ'] + apoe_genotype_columns
+    cols_to_drop = ['sample', 'cts_mmse30_lv', 'pmi']
     X_train = X_train.drop(columns=cols_to_drop, errors='ignore')
     X_test = X_test.drop(columns=cols_to_drop, errors='ignore')
-
 
     class_weight_ratio = (len(y_train) / (2 * np.bincount(y_train)))  # inverse frequency
     sample_weight = np.array([class_weight_ratio[label] for label in y_train])
@@ -213,6 +212,9 @@ def main():
 
     # Use valid folds in AutoML
     maximal_classifier = AutoML()
+
+    with open(LOG_FILE_PATH, 'a') as log_file:
+        log_file.write(f"Reached classifier for: {cell_type}\n")
 
     automl_settings = {
         "X_train": X_train,
@@ -292,7 +294,7 @@ def main():
         'TAG': X_train.index,
         'true_label': y_train.values,
         'predicted_label': y_pred_train_optimal,
-        'predicted_proba': y_prob_train,
+        'predicted_proba': y_prob_train
     })
 
     test_predictions_df = pd.DataFrame({
@@ -410,6 +412,9 @@ def main():
             "log_file_name": f"{cell_log_dir}/top_{i}_features_log.txt",
         }
 
+        with open(LOG_FILE_PATH, 'a') as log_file:
+            log_file.write(f"Incremental classifier finsihed for: {cell_type}\n")
+
         # Retrain from scratch
         incremental_classifier = AutoML()
         incremental_classifier.fit(**automl_settings)
@@ -488,6 +493,9 @@ def main():
     plt.close()
 
     print(f"Saved AUC vs. feature count plot to: {plot_path}")
+
+    with open(LOG_FILE_PATH, 'a') as log_file:
+            log_file.write(f"Finished demographics and genes without pmi for cell on cell:{cell_type}\n")
 
     
 

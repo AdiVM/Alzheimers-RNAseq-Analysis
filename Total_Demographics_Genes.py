@@ -103,7 +103,27 @@ def main():
     train_matrix_filtered = train_matrix.drop(select_missing_genes(train_matrix), axis=1)
     test_matrix_filtered = test_matrix.drop(select_missing_genes(test_matrix), axis=1)
     
+    ###### Implementing RFE
     # Merge the train and test matrices with their respective metadata files
+
+    from sklearn.feature_selection import RFE
+    from sklearn.linear_model import LogisticRegression
+
+    # Step 1: Match y_train labels by TAG index
+    y_rfe = train_metadata.set_index('TAG').loc[train_matrix_filtered.index]['alzheimers_or_control']
+
+    # Step 2: Fit RFE on gene matrix only
+    rfe_estimator = LogisticRegression(max_iter=1000, solver='saga')
+    rfe_selector = RFE(estimator=rfe_estimator, n_features_to_select=100, step=0.1)
+    rfe_selector.fit(train_matrix_filtered, y_rfe)
+
+    # Step 3: Get selected gene names
+    selected_genes = train_matrix_filtered.columns[rfe_selector.support_]
+
+    # Step 4: Subset train and test matrices to those genes
+    train_matrix_filtered = train_matrix_filtered[selected_genes]
+    test_matrix_filtered = test_matrix_filtered[selected_genes]
+    #############
 
     train_data = train_matrix_filtered.merge(
         train_metadata[['TAG', 'msex', 'sample', 'broad.cell.type', 'alzheimers_or_control', 'age_death', 'educ', 'cts_mmse30_lv', 'pmi'] + apoe_genotype_columns],

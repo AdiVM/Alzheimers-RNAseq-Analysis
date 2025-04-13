@@ -1,4 +1,3 @@
-## This script is used to run AutoML on just metadata variables on a cell type basis. 
 import argparse
 import os
 import pandas as pd
@@ -28,8 +27,7 @@ def main():
     cell_type = args.cell_type
 
 
-    log_message = f"Processing {exp_type} data with {cell_type} cells using full integration of gene and metadata features"
-    #log_message = f"Processing {exp_type} data with all cell types using full integration of gene and metadata features"
+    log_message = f"Processing {exp_type} data using full metadata features"
     with open(LOG_FILE_PATH, 'a') as log_file:
         log_file.write(log_message + '\n')
 
@@ -57,7 +55,7 @@ def main():
     train_samples, test_samples = train_test_split(
         sample_summary['sample'],
         test_size=0.2,
-        random_state=4,
+        random_state=42,
         stratify=sample_summary['stratify_group']
     )
 
@@ -69,29 +67,22 @@ def main():
     train_metadata = train_metadata[train_metadata['broad.cell.type'] == cell_type]
     test_metadata = test_metadata[test_metadata['broad.cell.type'] == cell_type]
 
+    # Do not drop duplicates since this is cell_on_Cell training
 
     print(f"Number of cases in training: {sum(train_metadata['alzheimers_or_control'])}")
     print(f"Number of cases in test: {sum(test_metadata['alzheimers_or_control'])}")
     
-    # Merge the train and test matrices with their respective metadata files
-
-    train_data = train_metadata.set_index('TAG')
-    test_data = test_metadata.set_index('TAG')
     
+    # Choose only demographic features
+    demographic_features = ['msex', 'sample', 'age_death', 'educ', 'cts_mmse30_lv', 'pmi'] + apoe_genotype_columns
 
-
-    demographic_columns = ['msex', 'sample', 'broad.cell.type', 'alzheimers_or_control', 'age_death', 'educ','cts_mmse30_lv', 'pmi'] + apoe_genotype_columns
-    X_train = train_data[demographic_columns].copy()
-    X_test = test_data[demographic_columns].copy()
-    
-
-    # Drop the alzheimers or control column from the dataset
-    X_train = X_train.drop(columns=['alzheimers_or_control'])
-    X_test = X_test.drop(columns=['alzheimers_or_control'])
-    
     # Define the target variable
-    y_train = train_data['alzheimers_or_control']
-    y_test = test_data['alzheimers_or_control']
+    y_train = train_metadata['alzheimers_or_control']
+    y_test = test_metadata['alzheimers_or_control']
+
+    X_train = train_metadata[demographic_features].copy()
+    X_test = test_metadata[demographic_features].copy()
+
 
     print("Printing dimensionality of X_train and X_test post filtering and merging")
 
@@ -104,54 +95,78 @@ def main():
     from sklearn.model_selection import StratifiedGroupKFold
     import numpy as np
 
+    def generate_valid_folds(X, y, groups, n_splits=5, max_retries=100):
+        """
+        Generate valid folds for StratifiedGroupKFold to ensure no fold has only one class.
+        Retries until valid folds are created.
+        """
+        retries = 0
+        while retries < max_retries:
+            retries += 1
+            valid_folds = True
+            stratified_group_kfold = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=np.random.randint(1000))
+            
+            # Generate folds
+            folds = list(stratified_group_kfold.split(X, y, groups))
 
+            # Check for class balance in validation folds
+            for fold, (train_idx, val_idx) in enumerate(folds):
+                train_y, val_y = y.iloc[train_idx], y.iloc[val_idx]
+                if len(val_y.unique()) < 2:  # Check if validation set has both classes
+                    print(f"Retry {retries}: Fold {fold + 1} has only one class. Retrying...")
+                    valid_folds = False
+                    break
 
-    # Convert age of death variable to 
-    X_train.loc[X_train.age_death == '90+', 'age_death'] = 90
-    X_test.loc[X_test.age_death == '90+', 'age_death'] = 90
-    X_train.age_death = X_train.age_death.astype(float)
-    X_test.age_death = X_test.age_death.astype(float)
+            if valid_folds:
+                print(f"Valid folds generated after {retries} retries.")
+                return folds  # Return valid folds
 
+        raise ValueError("Unable to generate valid folds after maximum retries.")
+    
+    # Generate valid folds
+    # valid_folds = generate_valid_folds(
+    #     X_train,  # Feature matrix
+    #     y_train,  # Target variable
+    #     groups=train_metadata['sample'],  # Group variable
+    #     n_splits=10,
+    #     max_retries=100
+    # )
 
     cell_log_dir = os.path.join(log_dir_path, cell_type)
-    # cell_log_dir = os.path.join(log_dir_path, 'all_cell_types')
 
     # Create the directory if it doesn’t exist
     os.makedirs(cell_log_dir, exist_ok=True)
 
     # Dropping samples from the dataset
-    cols_to_drop = ['sample', 'cts_mmse30_lv', 'pmi']
-    X_train = X_train.drop(columns=cols_to_drop, errors='ignore')
-    X_test = X_test.drop(columns=cols_to_drop, errors='ignore')
+    X_train = X_train.drop(columns=['sample', 'cts_mmse30_lv', 'pmi'])
+    X_test = X_test.drop(columns=['sample', 'cts_mmse30_lv', 'pmi'])
 
-    class_weight_ratio = (len(y_train) / (2 * np.bincount(y_train)))  # inverse frequency
+    class_weight_ratio = (len(y_train) / (2 * np.bincount(y_train.astype(int))))  # inverse frequency
     sample_weight = np.array([class_weight_ratio[label] for label in y_train])
+
+    with open(LOG_FILE_PATH, 'a') as log_file:
+        log_file.write(f"Reached classifier for: {cell_type} \n")
 
 
     # Use valid folds in AutoML
     maximal_classifier = AutoML()
-
-    automl_settings = {
-        "X_train": X_train,
-        "y_train": y_train,
-        "sample_weight": sample_weight,
-        "task": "classification",
-        "time_budget": 5400,
-        "metric": 'log_loss',
-        "n_jobs": -1,
-        "eval_method": 'cv',
-        "split_type": 'group',
-        "groups": train_metadata['sample'],
-        "log_training_metric": True,
-        "early_stop": True,
-        "seed": 234567,
-        "estimator_list": ['lgbm'],
-        "model_history": True,
-        "log_file_name": f"{cell_log_dir}/all_features_log.txt"
-    }
-
-    # Fit
-    maximal_classifier.fit(**automl_settings)
+    maximal_classifier.fit(
+        X_train, y_train,
+        sample_weight=sample_weight,
+        task="classification",
+        time_budget=3600,
+        metric='log_loss',
+        n_jobs=-1,
+        eval_method='cv',
+        split_type='group',
+        groups=train_metadata['sample'],
+        log_training_metric=True,
+        early_stop=True,
+        seed=234567,
+        estimator_list=['lgbm'],
+        model_history=True,
+        log_file_name=f"{cell_log_dir}/all_features_log.txt"
+    )
 
 
 
@@ -202,52 +217,6 @@ def main():
 
     pd.DataFrame([metrics]).to_csv(f'{cell_log_dir}/output_csv.csv', index=False)
 
-        # Create a DataFrame to store probabilities and classifications
-    train_predictions_df = pd.DataFrame({
-        'TAG': X_train.index,
-        'true_label': y_train.values,
-        'predicted_label': y_pred_train_optimal,
-        'predicted_proba': y_prob_train
-    })
-
-    test_predictions_df = pd.DataFrame({
-        'TAG': X_test.index,
-        'true_label': y_test.values,
-        'predicted_label': y_pred_test_optimal,
-        'predicted_proba': y_prob_test
-    })
-
-    # Define classification categories
-    train_predictions_df['classification_category'] = np.select(
-        [
-            (train_predictions_df['true_label'] == 1) & (train_predictions_df['predicted_label'] == 1),  # True Positive
-            (train_predictions_df['true_label'] == 1) & (train_predictions_df['predicted_label'] == 0),  # False Negative
-            (train_predictions_df['true_label'] == 0) & (train_predictions_df['predicted_label'] == 0),  # True Negative
-            (train_predictions_df['true_label'] == 0) & (train_predictions_df['predicted_label'] == 1)   # False Positive
-        ],
-        ['TP', 'FN', 'TN', 'FP'],
-        default='Unknown'
-    )
-
-    test_predictions_df['classification_category'] = np.select(
-        [
-            (test_predictions_df['true_label'] == 1) & (test_predictions_df['predicted_label'] == 1),
-            (test_predictions_df['true_label'] == 1) & (test_predictions_df['predicted_label'] == 0),
-            (test_predictions_df['true_label'] == 0) & (test_predictions_df['predicted_label'] == 0),
-            (test_predictions_df['true_label'] == 0) & (test_predictions_df['predicted_label'] == 1)
-        ],
-        ['TP', 'FN', 'TN', 'FP'],
-        default='Unknown'
-    )
-
-    # Save predictions to CSV files
-    train_predictions_df.to_csv(f'{cell_log_dir}/train_predictions.csv', index=False)
-    test_predictions_df.to_csv(f'{cell_log_dir}/test_predictions.csv', index=False)
-
-    print("Prediction probabilities for full classifier saved successfully.")
-
-
-
 
     # Feature importance for top 100 features and avoid mismatch error
     print("Starting iterative feature importances")
@@ -290,57 +259,55 @@ def main():
     except ValueError as e:
         print(f"Error extracting features: {e}")
         return  # Exit if feature importances are unavailable
+    
+
+    # Simple identity column mapping (no renaming needed for demographics model)
+    column_mapping = {col: col for col in X_train.columns}
 
     # Map features back to original names for interpretability
-    # top_features_original = [column_mapping.get(feature, feature) for feature in top_features_cleaned]
+    top_features_original = [column_mapping.get(feature, feature) for feature in top_features_cleaned]
 
     # --- Start Incremental Evaluation ---
     incremental_results = []
 
-    for i, feature_subset in enumerate(top_features_cleaned[:25], start=1):
-        print(f"Retraining model from scratch with top {i} features")
+    for i in range(1, min(7, len(top_features_cleaned)+1)):
         current_features = top_features_cleaned[:i]
+        print(f"Retraining model from scratch with top {i} features")
         
         # Subset data
         X_train_top_i = X_train[current_features]
         X_test_top_i = X_test[current_features]
-
-        # Define settings dictionary
-        automl_settings = {
-            "X_train": X_train_top_i,
-            "y_train": y_train,
-            "sample_weight": sample_weight,
-            "task": "classification",
-            "time_budget": 600,
-            "metric": 'log_loss',
-            "n_jobs": -1,
-            "eval_method": 'cv',
-            "split_type": 'group',
-            "groups": train_metadata['sample'],
-            "log_training_metric": True,
-            "early_stop": True,
-            "seed": 234567,
-            "estimator_list": ['lgbm'],
-            "model_history": True,
-            "log_file_name": f"{cell_log_dir}/top_{i}_features_log.txt",
-        }
-
+        
         # Retrain from scratch
         incremental_classifier = AutoML()
-        incremental_classifier.fit(**automl_settings)
+        incremental_classifier.fit(
+            X_train_top_i,
+            y_train,
+            sample_weight=sample_weight,
+            task="classification",
+            time_budget=600,  # Shorter budget set for smaller feature set
+            metric='log_loss',
+            n_jobs=-1,
+            eval_method='cv',
+            split_type='group',
+            groups=train_metadata['sample'],
+            log_training_metric=True,
+            early_stop=True,
+            seed=234567,
+            estimator_list=['lgbm'],
+            model_history=True,
+            log_file_name=f"{cell_log_dir}/top_{i}_features_log.txt"
+        )
+
+        with open(LOG_FILE_PATH, 'a') as log_file:
+            log_file.write(f"Incremental classifier finsihed for: {cell_type} \n")
 
         # Predict probabilities
         y_prob_train_i = incremental_classifier.predict_proba(X_train_top_i)[:, 1]
         y_prob_test_i = incremental_classifier.predict_proba(X_test_top_i)[:, 1]
-
-        # Dynamically calculate best threshold based on train set
-        precision, recall, thresholds = precision_recall_curve(y_train, y_prob_train_i)
-        f1_scores = 2 * (precision * recall) / (precision + recall + 1e-8)
-        optimal_index = np.argmax(f1_scores)
-        dynamic_threshold = thresholds[optimal_index]
-
-        y_pred_train_i = (y_prob_train_i >= dynamic_threshold).astype(int)
-        y_pred_test_i = (y_prob_test_i >= dynamic_threshold).astype(int)
+        
+        y_pred_train_i = (y_prob_train_i >= optimal_threshold).astype(int)
+        y_pred_test_i = (y_prob_test_i >= optimal_threshold).astype(int)
 
         # Collect metrics
         result = {
@@ -363,23 +330,6 @@ def main():
         }
         incremental_results.append(result)
 
-        # Save predictions
-        train_predictions_i = pd.DataFrame({
-            'TAG': X_train_top_i.index,
-            'true_label': y_train.values,
-            'predicted_label': y_pred_train_i,
-            'predicted_proba': y_prob_train_i
-        })
-        train_predictions_i.to_csv(f"{cell_log_dir}/train_predictions_top_{i}_features.csv", index=False)
-
-        test_predictions_i = pd.DataFrame({
-            'TAG': X_test_top_i.index,
-            'true_label': y_test.values,
-            'predicted_label': y_pred_test_i,
-            'predicted_proba': y_prob_test_i
-        })
-        test_predictions_i.to_csv(f"{cell_log_dir}/test_predictions_top_{i}_features.csv", index=False)
-
     # Save results
     incremental_results_df = pd.DataFrame(incremental_results)
     incremental_results_df.to_csv(f'{cell_log_dir}/incremental_top_features_metrics.csv', index=False)
@@ -400,6 +350,54 @@ def main():
     plt.close()
 
     print(f"Saved AUC vs. feature count plot to: {plot_path}")
+
+
+    # Create a DataFrame to store probabilities and classifications
+    train_predictions_df = pd.DataFrame({
+        'TAG': X_train.index,
+        'true_label': y_train.values,
+        'predicted_label': y_pred_train_optimal,
+        'predicted_proba': y_prob_train
+    })
+
+    test_predictions_df = pd.DataFrame({
+        'TAG': X_test.index,
+        'true_label': y_test.values,
+        'predicted_label': y_pred_test_optimal,
+        'predicted_proba': y_prob_test
+    })
+
+    # Define classification categories
+    train_predictions_df['classification_category'] = np.select(
+        [
+            (train_predictions_df['true_label'] == 1) & (train_predictions_df['predicted_label'] == 1),  # True Positive
+            (train_predictions_df['true_label'] == 1) & (train_predictions_df['predicted_label'] == 0),  # False Negative
+            (train_predictions_df['true_label'] == 0) & (train_predictions_df['predicted_label'] == 0),  # True Negative
+            (train_predictions_df['true_label'] == 0) & (train_predictions_df['predicted_label'] == 1)   # False Positive
+        ],
+        ['TP', 'FN', 'TN', 'FP'],
+        default='Unknown'
+    )
+
+    test_predictions_df['classification_category'] = np.select(
+        [
+            (test_predictions_df['true_label'] == 1) & (test_predictions_df['predicted_label'] == 1),
+            (test_predictions_df['true_label'] == 1) & (test_predictions_df['predicted_label'] == 0),
+            (test_predictions_df['true_label'] == 0) & (test_predictions_df['predicted_label'] == 0),
+            (test_predictions_df['true_label'] == 0) & (test_predictions_df['predicted_label'] == 1)
+        ],
+        ['TP', 'FN', 'TN', 'FP'],
+        default='Unknown'
+    )
+
+    # Save predictions to CSV files
+    train_predictions_df.to_csv(f'{cell_log_dir}/train_predictions.csv', index=False)
+    test_predictions_df.to_csv(f'{cell_log_dir}/test_predictions.csv', index=False)
+
+    with open(LOG_FILE_PATH, 'a') as log_file:
+            log_file.write(f"Finished demographics without pmi for cell on cell: {cell_type} \n")
+
+    print("Prediction probabilities saved successfully.")
 
     
 

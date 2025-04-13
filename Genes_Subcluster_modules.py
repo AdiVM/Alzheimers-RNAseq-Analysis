@@ -12,28 +12,24 @@ import joblib
 from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import StratifiedGroupKFold
+from sklearn.feature_selection import RFE
+from lightgbm import LGBMClassifier
 
-# Change this path to use for genes only model but kept the actual file path the same
-
-log_dir_path = "/n/groups/patel/adithya/Alz_Outputs/Final_Outputs/Cell_on_cell_genes_rfe/"
+log_dir_path = "/n/groups/patel/adithya/Alz_Outputs/Final_Outputs/Genes_only_subcluster_with_modules/"
 LOG_FILE_PATH = os.path.expanduser(f'{log_dir_path}experiment_log.txt')
 
 
 def main():
     parser = argparse.ArgumentParser(description='Run AutoML on combined gene expression and metadata data')
     parser.add_argument('--exp_type', type=str, choices=['maximal'], required=True, help='Specify experiment type')
-    parser.add_argument('--cell_type', type=str, required=True, help='Specify the cell type to train on')
+    parser.add_argument('--subcluster', type=str, required=True, help='Specify the subcluster to train on (Mic0, Mic1, etc.)')
     args = parser.parse_args()
     
     exp_type = args.exp_type
-    cell_type = args.cell_type
-
-    NUM_RUNS = 5
-    results_list = []
-    all_test_predictions = []
+    subcluster = args.subcluster
 
 
-    log_message = f"Processing {exp_type} data with {cell_type} cells using full integration of gene and metadata features"
+    log_message = f"Processing {exp_type} data with subcluster {subcluster} using full integration of gene and metadata features"
     #log_message = f"Processing {exp_type} data with all cell types using full integration of gene and metadata features"
     with open(LOG_FILE_PATH, 'a') as log_file:
         log_file.write(log_message + '\n')
@@ -71,8 +67,8 @@ def main():
     test_metadata = metadata[metadata['sample'].isin(test_samples)]
 
     # Filter both the training and testing for cell type -- This is cell on cell prediction
-    train_metadata = train_metadata[train_metadata['broad.cell.type'] == cell_type]
-    test_metadata = test_metadata[test_metadata['broad.cell.type'] == cell_type]
+    train_metadata = train_metadata[train_metadata['Subcluster'] == subcluster]
+    test_metadata = test_metadata[test_metadata['Subcluster'] == subcluster]
 
 
     print(f"Number of cases in training: {sum(train_metadata['alzheimers_or_control'])}")
@@ -81,7 +77,7 @@ def main():
     # Function to select and drop missing genes
     def select_missing_genes(filtered_matrix):
         mean_threshold = 2
-        missingness_threshold = 90
+        missingness_threshold = 70
     
         mean_gene_expression = filtered_matrix.mean(axis=0)
         missingness = (filtered_matrix == 0).sum(axis=0) / filtered_matrix.shape[0] * 100
@@ -102,42 +98,84 @@ def main():
     print("Printing dimensionality of X_train and X_test initallly")
     print(train_matrix.shape)
     print(test_matrix.shape)
-
+    
     # Filter missing genes
+    # Filter missing genes using only the training matrix
     genes_to_drop = select_missing_genes(train_matrix)
     train_matrix_filtered = train_matrix.drop(columns=genes_to_drop)
     test_matrix_filtered = test_matrix.drop(columns=[g for g in genes_to_drop if g in test_matrix.columns])
 
-    from sklearn.feature_selection import RFE
-    from sklearn.feature_selection import RFECV
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.model_selection import StratifiedKFold
-
-    # Define base estimator
-    rfe_estimator = LogisticRegression(max_iter=100, solver='saga')
-
-    # Subset and match target labels
+    # Update: Running Recursive Feature Elimination to select top genes
+    print("Running RFE to find top genes")
     X_rfe = train_matrix_filtered.copy()
     y_rfe = train_metadata.set_index('TAG').loc[X_rfe.index]['alzheimers_or_control']
 
-    # Run RFECV to find optimal number of features
-    rfecv = RFECV(estimator=rfe_estimator, step=0.1, cv=StratifiedKFold(5), scoring='roc_auc', verbose=1, n_jobs=-1)
+    # Initialize base estimator
+    base_estimator = LGBMClassifier(n_estimators=100, random_state=42)
+
+    # Create and fit the RFE model
+    from sklearn.feature_selection import RFECV
+    from sklearn.model_selection import StratifiedKFold
+
+    # Use Stratified CV with 5 folds
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+    # Run RFECV to automatically select number of features
+    rfecv = RFECV(estimator=base_estimator, step=0.05, cv=cv, scoring='roc_auc', n_jobs=-1)
     rfecv.fit(X_rfe, y_rfe)
 
-    optimal_feature_count = rfecv.n_features_
-    print("Optimal number of features selected by RFECV:", optimal_feature_count)
+    # Get selected features
+    top_genes_mask = rfecv.support_
+    top_optimized_genes = X_rfe.columns[top_genes_mask].tolist()
 
-    # Use RFE with optimal number of features
-    selector = RFE(estimator=rfe_estimator, n_features_to_select=optimal_feature_count, step=0.1)
-    selector.fit(X_rfe, y_rfe)
+    print("Optimal number of genes:", rfecv.n_features_)
 
-    selected_genes = X_rfe.columns[selector.support_]
+    # Save to CSV
+    pd.Series(top_optimized_genes).to_csv(f"{log_dir_path}/top_genes_RFECV_{subcluster}.csv", index=False)
 
-    train_matrix_filtered = train_matrix_filtered[selected_genes]
-    test_matrix_filtered = test_matrix_filtered[selected_genes]
 
+    # Get selected gene names
+    top_genes = top_optimized_genes
+
+    # Using a new clustering method
+
+    from scipy.cluster.hierarchy import linkage, fcluster
+
+    # Create gene-level matrix: genes x cells
+    X_gene = train_matrix_filtered[top_genes].T  # shape: (genes, cells)
+
+    # Compute correlation between genes
+    corr_matrix = X_gene.corr()
+
+    # Perform hierarchical clustering
+    linkage_matrix = linkage(corr_matrix, method='average')
+
+    # Choose number of modules (e.g., 10)
+    module_labels = fcluster(linkage_matrix, t=10, criterion='maxclust')
+
+    # Map genes to modules
+    gene_modules = pd.DataFrame({
+        'gene': X_gene.index,
+        'module': module_labels
+    })
+
+    # Create module-level features: average expression per module
+    X_train_modules = pd.DataFrame(index=train_matrix_filtered.index)
+    X_test_modules = pd.DataFrame(index=test_matrix_filtered.index)
+
+    for module_id in gene_modules['module'].unique():
+        genes = gene_modules[gene_modules['module'] == module_id]['gene']
+        X_train_modules[f'module_{module_id}'] = train_matrix_filtered[genes].mean(axis=1)
+        X_test_modules[f'module_{module_id}'] = test_matrix_filtered[genes].mean(axis=1)
+
+    print(f"Created {X_train_modules.shape[1]} gene modules.")
+
+    # Save to CSV
+    pd.Series(top_500_genes).to_csv(f"{log_dir_path}/top_500_genes_{subcluster}.csv", index=False)
+    print(f"Saved top 500 genes for {subcluster} to CSV.")
     
     # Merge the train and test matrices with their respective metadata files
+
 
     train_data = train_matrix_filtered.merge(
         train_metadata[['TAG', 'msex', 'sample', 'broad.cell.type', 'alzheimers_or_control', 'age_death', 'educ', 'cts_mmse30_lv', 'pmi'] + apoe_genotype_columns],
@@ -152,24 +190,31 @@ def main():
         right_on='TAG',
         how='inner'
     ).set_index('TAG')
-    
-        # Clean column names for model compatibility
+
+
+    # Clean column names for model compatibility
     train_data.columns = train_data.columns.str.replace(r'[^A-Za-z0-9_]+', '', regex=True)
     test_data.columns = test_data.columns.str.replace(r'[^A-Za-z0-9_]+', '', regex=True)
+
+    # Update apoe column names to ensure APOE genotype is acutally dropped
+    apoe_genotype_columns = [col for col in train_data.columns if col.startswith("apoe_genotype_")]
     
     # Ensure common genes are used between training and testing sets
     common_genes = train_data.columns.intersection(test_data.columns)
-    X_train = train_data[common_genes]
-    X_test = test_data[common_genes]
+    X_train = X_train_modules.copy()
+    X_test = X_test_modules.copy()
 
     # Drop the alzheimers or control column from the dataset
     X_train = X_train.drop(columns=['alzheimers_or_control'])
     X_test = X_test.drop(columns=['alzheimers_or_control'])
     
-    # Map original column names to cleaned names for later interpretability
-    original_columns = common_genes  # Use common genes after filtering
-    cleaned_columns = original_columns.str.replace(r'[^A-Za-z0-9_]+', '', regex=True)
-    column_mapping = dict(zip(cleaned_columns, original_columns))
+    # # Map original column names to cleaned names for later interpretability
+    # original_columns = common_genes  # Use common genes after filtering
+    # cleaned_columns = original_columns.str.replace(r'[^A-Za-z0-9_]+', '', regex=True)
+    # column_mapping = dict(zip(cleaned_columns, original_columns))
+
+    top_features_original = top_features_cleaned
+    
     
     # Define the target variable
     y_train = train_data['alzheimers_or_control']
@@ -182,33 +227,34 @@ def main():
 
 
     #########################################################################
+    # Trying a new method of creating cross validation folds:
+    from sklearn.model_selection import StratifiedGroupKFold
+    import numpy as np
 
 
 
-    # Convert age of death variable to float
+    # Convert age of death variable to 
     X_train.loc[X_train.age_death == '90+', 'age_death'] = 90
     X_test.loc[X_test.age_death == '90+', 'age_death'] = 90
     X_train.age_death = X_train.age_death.astype(float)
     X_test.age_death = X_test.age_death.astype(float)
 
 
-    cell_log_dir = os.path.join(log_dir_path, cell_type)
+    cell_log_dir = os.path.join(log_dir_path, subcluster)
     # cell_log_dir = os.path.join(log_dir_path, 'all_cell_types')
 
     # Create the directory if it doesn’t exist
     os.makedirs(cell_log_dir, exist_ok=True)
 
-    # Dropping columns from the dataset
-    cols_to_drop = ['sample', 'cts_mmse30_lv', 'pmi', 'msex', 'broad.cell.type', 'alzheimers_or_control', 'age_death', 'educ'] + apoe_genotype_columns
-    X_train = X_train.drop(columns=cols_to_drop, errors='ignore')
-    X_test = X_test.drop(columns=cols_to_drop, errors='ignore')
+    # Define metadata columns to drop (cleaned versions)
+    cleaned_columns_to_drop = ['msex', 'sample', 'broadcelltype', 'age_death', 'educ', 'cts_mmse30_lv', 'pmi'] + apoe_genotype_columns
 
+    # Drop only those columns that exist (prevent KeyError)
+    X_train = X_train.drop(columns=[col for col in cleaned_columns_to_drop if col in X_train.columns])
+    X_test = X_test.drop(columns=[col for col in cleaned_columns_to_drop if col in X_test.columns])
 
     class_weight_ratio = (len(y_train) / (2 * np.bincount(y_train)))  # inverse frequency
     sample_weight = np.array([class_weight_ratio[label] for label in y_train])
-
-    selected_features_df = pd.DataFrame({'selected_feature': selected_genes})
-    selected_features_df.to_csv(os.path.join(cell_log_dir, 'rfe_top_500_features.csv'), index=False)
 
 
     # Use valid folds in AutoML
@@ -232,7 +278,6 @@ def main():
         "model_history": True,
         "log_file_name": f"{cell_log_dir}/all_features_log.txt"
     }
-
 
     # Fit
     maximal_classifier.fit(**automl_settings)
@@ -292,7 +337,7 @@ def main():
         'TAG': X_train.index,
         'true_label': y_train.values,
         'predicted_label': y_pred_train_optimal,
-        'predicted_proba': y_prob_train,
+        'predicted_proba': y_prob_train
     })
 
     test_predictions_df = pd.DataFrame({
@@ -330,6 +375,8 @@ def main():
     test_predictions_df.to_csv(f'{cell_log_dir}/test_predictions.csv', index=False)
 
     print("Prediction probabilities for full classifier saved successfully.")
+
+    gene_modules.to_csv(f'{cell_log_dir}/gene_module_assignments.csv', index=False)
 
 
 
@@ -382,7 +429,7 @@ def main():
     # --- Start Incremental Evaluation ---
     incremental_results = []
 
-    for i, feature_subset in enumerate(top_features_cleaned[:25], start=1):
+    for i, feature_subset in enumerate(top_features_cleaned[:30], start=1):
         print(f"Retraining model from scratch with top {i} features")
         current_features = top_features_cleaned[:i]
         
@@ -414,7 +461,11 @@ def main():
         incremental_classifier = AutoML()
         incremental_classifier.fit(**automl_settings)
 
-        joblib.dump(incremental_classifier, f"{cell_log_dir}/top_{i}_features_classifier.joblib")
+        # Save the incremental classifier
+        joblib.dump(
+            incremental_classifier,
+            f"{cell_log_dir}/incremental_classifier_top_{i}_features.joblib"
+        )
 
         # Predict probabilities
         y_prob_train_i = incremental_classifier.predict_proba(X_train_top_i)[:, 1]

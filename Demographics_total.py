@@ -14,7 +14,7 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import StratifiedGroupKFold
 
-log_dir_path = "/n/groups/patel/adithya/Alz_Outputs/Final_Outputs/Demo_total/"
+log_dir_path = "/n/groups/patel/adithya/Alz_Outputs/Final_Outputs/Total_demo_nopmi/"
 LOG_FILE_PATH = os.path.expanduser(f'{log_dir_path}experiment_log.txt')
 
 
@@ -120,9 +120,9 @@ def main():
     os.makedirs(cell_log_dir, exist_ok=True)
 
     # Dropping samples from the dataset
-    X_train = X_train.drop(columns=['sample', 'cts_mmse30_lv', ])
-    ['msex', 'sample', 'broad.cell.type', 'alzheimers_or_control', 'age_death', 'educ','cts_mmse30_lv', 'pmi'] + apoe_genotype_columns
-    X_test = X_test.drop(columns=['sample', 'cts_mmse30_lv'])
+    X_train = X_train.drop(columns=['sample', 'cts_mmse30_lv', 'pmi'])
+    #['msex', 'sample', 'broad.cell.type', 'alzheimers_or_control', 'age_death', 'educ','cts_mmse30_lv', 'pmi'] + apoe_genotype_columns
+    X_test = X_test.drop(columns=['sample', 'cts_mmse30_lv', 'pmi'])
 
     class_weight_ratio = (len(y_train) / (2 * np.bincount(y_train)))  # inverse frequency
     sample_weight = np.array([class_weight_ratio[label] for label in y_train])
